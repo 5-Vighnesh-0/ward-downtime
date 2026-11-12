@@ -7,9 +7,13 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "migrate": "node src/migrate.ts",
-    "verify-chain": "node src/verify-chain.ts"
+    "verify-chain": "node src/verify-chain.ts",
+    "admin": "node src/admin-cli.ts",
+    "start": "node src/main.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/rate-limit": "11.2.1",
     "@wdb/shared": "workspace:*",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",

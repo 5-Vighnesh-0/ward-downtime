@@ -17,9 +17,9 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Postgres schema, append-only event table, hash chain (SEC-10)
 - [x] Push/pull endpoints, idempotency by event ID (FR-4)
 - [x] Server-assigned order (FR-5, SEC-12)
-- [ ] Signature, device and role checks (SEC-4 to SEC-9). Signature, device status and role checks done (M2a); enrollment and sessions in M2b
-- [ ] SSE live updates
-- [ ] Audit log (FR-14, SEC-18)
+- [x] Signature, device and role checks (SEC-4 to SEC-9)
+- [x] SSE live updates
+- [ ] Audit log (FR-14, SEC-18). Audit rows written (SEC-18); view/export endpoints come with the M3 audit screen
 
 ## M3: Offline PWA (`apps/web`)
 - [ ] IndexedDB store and unsynced queue (FR-2)
@@ -33,7 +33,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [ ] Recovery export JSON + CSV (FR-11)
 
 ## M5: Hardening
-- [ ] Auth, roles, idle lock (SEC-5 to SEC-8)
+- [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Server side done in M2b; client idle lock and offline sign-in in M3
 - [ ] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3)
 - [ ] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31)
 - [ ] Backup/restore drill, runbooks (SEC-27)

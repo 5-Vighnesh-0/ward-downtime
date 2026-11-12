@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { ALLOWED_ROLES, canonicalize, EventSchema, type Role } from '@wdb/shared';
 import { entryHash } from './chain.ts';
-import { devices, events, logHead, staff } from './db/schema.ts';
+import { auditLog, devices, events, logHead, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
 import { publicKeyFromRaw, verifySignature } from './signature.ts';
 
@@ -30,11 +30,16 @@ const eventIdOf = (raw: unknown): string | null => {
 };
 const sha256 = (s: string) => createHash('sha256').update(s).digest();
 
-export function appendBatch(db: Db, deviceId: string, raw: unknown[]): Promise<BatchOutcome> {
+const AUDIT = { appended: ['EVENT_APPEND', 'ok'], duplicate: ['EVENT_DUPLICATE', 'duplicate'], refused: ['EVENT_REFUSED', 'refused'] } as const;
+
+export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx = { requestId: 'internal' }): Promise<BatchOutcome> {
   return db.transaction(async (tx) => {
     const [device] = await tx.select().from(devices).where(eq(devices.deviceId, deviceId)).for('update');
-    if (!device || device.status === 'pending') return { ok: false, status: 403, code: 'DEVICE_NOT_ACTIVE' };
-    if (device.status === 'revoked') return { ok: false, status: 403, code: 'DEVICE_REVOKED' };
+    if (!device || device.status !== 'active') {
+      const code = device?.status === 'revoked' ? 'DEVICE_REVOKED' : 'DEVICE_NOT_ACTIVE';
+      await tx.insert(auditLog).values({ deviceId: device ? deviceId : null, action: 'PUSH_DENIED', outcome: 'denied', code, requestId: ctx.requestId });
+      return { ok: false, status: 403, code };
+    }
 
     // One row lock serializes every append, so serverSeq is gap-free and the chain is linear (FR-5).
     const [head] = await tx.select().from(logHead).where(eq(logHead.id, 1)).for('update');
@@ -44,15 +49,21 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[]): Promise<B
     const key = publicKeyFromRaw(device.publicKey);
     const roles = new Map<string, Role | null>();
     const results: EventResult[] = [];
+    const staffOf: (string | null)[] = []; // per result, for the audit rows (SEC-18)
 
     for (const r of raw) {
-      const refuse = (code: RefusalCode, eventId = eventIdOf(r)) => results.push({ eventId, status: 'refused', code });
+      let who: string | null = null;
+      const refuse = (code: RefusalCode, eventId = eventIdOf(r)) => {
+        results.push({ eventId, status: 'refused', code });
+        staffOf.push(who);
+      };
       const parsed = EventSchema.safeParse(r);
       if (!parsed.success) {
         refuse('SCHEMA_INVALID');
         continue;
       }
       const e = parsed.data;
+      who = e.staffId;
       if (e.deviceId !== deviceId) {
         refuse('DEVICE_MISMATCH');
         continue;
@@ -68,8 +79,10 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[]): Promise<B
         .from(events)
         .where(eq(events.eventId, e.eventId));
       if (existing) {
-        if (existing.bodySha256.equals(bodySha256)) results.push({ eventId: e.eventId, status: 'duplicate', serverSeq: existing.serverSeq });
-        else refuse('IDEMPOTENCY_MISMATCH');
+        if (existing.bodySha256.equals(bodySha256)) {
+          results.push({ eventId: e.eventId, status: 'duplicate', serverSeq: existing.serverSeq });
+          staffOf.push(who);
+        } else refuse('IDEMPOTENCY_MISMATCH');
         continue;
       }
       if (!roles.has(e.staffId)) {
@@ -104,6 +117,7 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[]): Promise<B
         hash,
       });
       results.push({ eventId: e.eventId, status: 'appended', serverSeq });
+      staffOf.push(who);
       lastSeq = serverSeq;
       lastHash = hash;
       lastDeviceSeq = e.deviceSeq;
@@ -111,6 +125,19 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[]): Promise<B
 
     await tx.update(logHead).set({ lastSeq, lastHash }).where(eq(logHead.id, 1));
     await tx.update(devices).set({ lastDeviceSeq, lastSeenAt: new Date() }).where(eq(devices.deviceId, deviceId));
+    if (results.length > 0) {
+      await tx.insert(auditLog).values(
+        results.map((x, i) => ({
+          staffId: staffOf[i] ?? null,
+          deviceId,
+          action: AUDIT[x.status][0],
+          eventId: x.eventId,
+          outcome: AUDIT[x.status][1],
+          code: x.status === 'refused' ? x.code : null,
+          requestId: ctx.requestId,
+        })),
+      );
+    }
     return { ok: true, headSeq: lastSeq, headHash: lastHash.toString('hex'), results };
   });
 }

@@ -6,16 +6,17 @@ import { buildApp } from '../src/app.ts';
 import { entryHash, GENESIS_HASH, type LedgerEntry } from '../src/chain.ts';
 import { createDb } from '../src/db.ts';
 import { verifyChain } from '../src/verify-chain.ts';
-import { addDevice, addStaff, admitOn, APP_URL, OWNER_URL, reset, signed, signEvent, type TestDevice } from './support.ts';
+import { addDevice, addStaff, admitOn, APP_URL, CSRF, ORIGIN, OWNER_URL, reset, sessionCookie, signed, signEvent, type TestDevice } from './support.ts';
 
 const owner = new pg.Pool({ connectionString: OWNER_URL });
 const { db, pool } = createDb(APP_URL);
 let app: FastifyInstance;
 let A: TestDevice;
 let B: TestDevice;
+let cookies = new Map<string, string>();
 
 beforeAll(async () => {
-  app = buildApp(db);
+  app = buildApp(db, { origin: ORIGIN });
   await app.ready();
 });
 afterAll(async () => {
@@ -30,12 +31,19 @@ beforeEach(async () => {
   }
   A = await addDevice(pool);
   B = await addDevice(pool);
+  cookies = new Map();
 });
 
-const push = (d: { deviceId: string }, events: unknown[]) =>
-  app.inject({ method: 'POST', url: '/api/v1/events', payload: { deviceId: d.deviceId, events } });
-const pull = (after = 0, limit?: number) =>
-  app.inject({ method: 'GET', url: `/api/v1/events?after=${after}${limit ? `&limit=${limit}` : ''}` });
+async function cookieFor(deviceId: string): Promise<string> {
+  const c = cookies.get(deviceId) ?? (await sessionCookie(pool, 'S-0001', deviceId));
+  cookies.set(deviceId, c);
+  return c;
+}
+const push = async (d: { deviceId: string }, events: unknown[]) =>
+  app.inject({ method: 'POST', url: '/api/v1/events', headers: { ...CSRF, cookie: await cookieFor(d.deviceId) }, payload: { deviceId: d.deviceId, events } });
+const raw = async (method: 'GET' | 'POST', url: string, extra: Record<string, unknown> = {}) =>
+  app.inject({ method, url, headers: { ...CSRF, cookie: await cookieFor(A.deviceId) }, ...extra });
+const pull = (after = 0, limit?: number) => raw('GET', `/api/v1/events?after=${after}${limit ? `&limit=${limit}` : ''}`);
 const statuses = (r: { json: () => { results: { status: string; code?: string }[] } }) =>
   r.json().results.map((x) => x.code ?? x.status);
 
@@ -134,16 +142,21 @@ describe('POST /api/v1/events', () => {
     ]);
   });
 
-  it('rejects unknown, pending and revoked devices before reading events', async () => {
+  it('needs a session on the same, active device before reading events', async () => {
     const pending = await addDevice(pool, 'pending');
     const revoked = await addDevice(pool, 'revoked');
-    const code = async (deviceId: string) => {
-      const r = await push({ deviceId }, [admitOn(A, 1)]);
-      return [r.statusCode, r.json().error.code];
-    };
-    expect(await code(crypto.randomUUID())).toEqual([403, 'DEVICE_NOT_ACTIVE']);
-    expect(await code(pending.deviceId)).toEqual([403, 'DEVICE_NOT_ACTIVE']);
-    expect(await code(revoked.deviceId)).toEqual([403, 'DEVICE_REVOKED']);
+    const code = (r: { statusCode: number; json: () => { error: { code: string } } }) => [r.statusCode, r.json().error.code];
+    const anon = await app.inject({ method: 'POST', url: '/api/v1/events', headers: CSRF, payload: { deviceId: A.deviceId, events: [admitOn(A, 1)] } });
+    expect(code(anon)).toEqual([401, 'NO_SESSION']);
+    const otherDevice = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      headers: { ...CSRF, cookie: await cookieFor(B.deviceId) },
+      payload: { deviceId: A.deviceId, events: [admitOn(A, 2)] },
+    });
+    expect(code(otherDevice)).toEqual([403, 'DEVICE_MISMATCH']);
+    expect(code(await push(pending, [admitOn(pending, 1)]))).toEqual([403, 'DEVICE_NOT_ACTIVE']);
+    expect(code(await push(revoked, [admitOn(revoked, 1)]))).toEqual([403, 'DEVICE_REVOKED']);
     expect((await pull()).json().entries).toHaveLength(0);
   });
 
@@ -151,17 +164,18 @@ describe('POST /api/v1/events', () => {
     const many = Array.from({ length: 101 }, (_, i) => admitOn(A, i + 1));
     expect((await push(A, many)).json().error.code).toBe('VALIDATION_FAILED');
     expect((await push(A, [])).statusCode).toBe(422);
-    expect((await app.inject({ method: 'POST', url: '/api/v1/events', payload: { events: [admitOn(A, 1)] } })).statusCode).toBe(422);
+    expect((await raw('POST', '/api/v1/events', { payload: { events: [admitOn(A, 1)] } })).statusCode).toBe(422);
 
+    const json = { 'content-type': 'application/json' };
     const big = await app.inject({
       method: 'POST',
       url: '/api/v1/events',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...json, ...CSRF, cookie: await cookieFor(A.deviceId) },
       payload: JSON.stringify({ deviceId: A.deviceId, events: [], pad: 'x'.repeat(262_144) }),
     });
     expect([big.statusCode, big.json().error.code]).toEqual([413, 'PAYLOAD_TOO_LARGE']);
 
-    const bad = await app.inject({ method: 'POST', url: '/api/v1/events', headers: { 'content-type': 'application/json' }, payload: '{' });
+    const bad = await app.inject({ method: 'POST', url: '/api/v1/events', headers: { ...json, ...CSRF, cookie: await cookieFor(A.deviceId) }, payload: '{' });
     expect([bad.statusCode, bad.json().error.code]).toEqual([400, 'BAD_REQUEST']);
   });
 
@@ -206,7 +220,7 @@ describe('GET /api/v1/events', () => {
 
   it('validates query parameters', async () => {
     for (const q of ['after=-1', 'after=x', 'limit=0', 'limit=1001']) {
-      expect((await app.inject({ method: 'GET', url: `/api/v1/events?${q}` })).statusCode).toBe(422);
+      expect((await raw('GET', `/api/v1/events?${q}`)).statusCode).toBe(422);
     }
   });
 });

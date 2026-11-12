@@ -1,45 +1,291 @@
 // HTTP API, design.md §5.2. Errors always use {"error": {"code", "message", "details?"}}.
-import Fastify, { type FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import cookie from '@fastify/cookie';
+import rateLimit from '@fastify/rate-limit';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import type { Role } from '@wdb/shared';
+import { AdminError, approveDevice, revokeDevice } from './admin.ts';
 import { appendBatch } from './append.ts';
-import { logHead } from './db/schema.ts';
+import { checkPin, fingerprint, newToken, parseDeviceSig, tokenHash, verifyDeviceSig } from './auth.ts';
+import { auditLog, devices, logHead, sessions, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
 import { readEntries } from './entries.ts';
+import { publicKeyFromRaw } from './signature.ts';
+import { createStreams } from './stream.ts';
 
+export interface AppOptions {
+  origin: string; // e.g. https://wdb.ward-a.hospital.internal (CSRF Origin check)
+  maxInflightPushes?: number;
+  streamBacklog?: number;
+  streamPingMs?: number;
+}
+
+interface Auth {
+  staffId: string;
+  role: Role;
+  deviceId: string;
+  tokenHash: Buffer;
+}
+declare module 'fastify' {
+  interface FastifyRequest {
+    auth?: Auth;
+  }
+}
+
+const SESSION_MS = 12 * 60 * 60 * 1000;
+const IDLE_MS = 30 * 60 * 1000;
+const LOCK_MS = 15 * 60 * 1000;
+const MAX_PIN_FAILURES = 5;
+const MAX_DEVICE_FAILURES = 20; // per device per 15 minutes
+
+const printable = /^[^\u0000-\u001f\u007f]+$/;
 const Batch = z.strictObject({ deviceId: z.uuid(), events: z.array(z.unknown()).min(1).max(100) });
 const PullQuery = z.strictObject({
   after: z.coerce.number().pipe(z.int().min(0)).default(0),
   limit: z.coerce.number().pipe(z.int().min(1).max(1000)).default(500),
 });
+const Enroll = z.strictObject({
+  deviceId: z.uuid(),
+  publicKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/), // 32 bytes, base64url
+  label: z.string().min(1).max(40).regex(printable),
+});
+const SignIn = z.strictObject({ staffId: z.string().regex(/^S-[0-9]{4}$/), pin: z.string().regex(/^[0-9]{6,8}$/) });
+const IdParam = z.strictObject({ id: z.uuid() });
 
 const error = (code: string, message: string, details?: unknown) => ({ error: { code, message, ...(details ? { details } : {}) } });
 
-export function buildApp(db: Db): FastifyInstance {
-  const app = Fastify({ bodyLimit: 262_144, logger: false }); // SEC-23: 256 KiB per push
+export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
+  const app = Fastify({ bodyLimit: 262_144, logger: false, genReqId: () => randomUUID(), requestIdHeader: false }); // SEC-23
+  const bus = new EventEmitter().setMaxListeners(100);
+  const streams = createStreams(db, bus, { backlog: opts.streamBacklog ?? 1000, pingMs: opts.streamPingMs ?? 20_000 });
+  const maxInflight = opts.maxInflightPushes ?? 500;
+  let inflight = 0;
+
+  const deny = (reply: FastifyReply, status: number, code: string, message: string) => reply.code(status).send(error(code, message));
+  const audit = (req: FastifyRequest, row: Omit<typeof auditLog.$inferInsert, 'requestId'>) =>
+    db.insert(auditLog).values({ ...row, requestId: req.id });
 
   app.setErrorHandler((err: { statusCode?: number }, _req, reply) => {
-    if (err.statusCode === 413) return reply.code(413).send(error('PAYLOAD_TOO_LARGE', 'Request body over 256 KiB'));
-    if (err.statusCode === 400 || err.statusCode === 415) return reply.code(err.statusCode).send(error('BAD_REQUEST', 'Malformed request'));
+    if (err.statusCode === 413) return deny(reply, 413, 'PAYLOAD_TOO_LARGE', 'Request body over 256 KiB');
+    if (err.statusCode === 429) return deny(reply, 429, 'RATE_LIMITED', 'Too many requests');
+    if (err.statusCode === 400 || err.statusCode === 415) return deny(reply, err.statusCode, 'BAD_REQUEST', 'Malformed request');
     app.log.error(err);
-    return reply.code(500).send(error('INTERNAL', 'Internal error')); // never leak internals
+    return deny(reply, 500, 'INTERNAL', 'Internal error'); // never leak internals
   });
-
-  // shortcut: no session or device-signature auth yet (M2a); M2b adds both before this runs on a real LAN.
-  app.post('/api/v1/events', async (req, reply) => {
-    const body = Batch.safeParse(req.body);
-    if (!body.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid batch', z.flattenError(body.error)));
-    const out = await appendBatch(db, body.data.deviceId, body.data.events);
-    if (!out.ok) return reply.code(out.status).send(error(out.code, out.code === 'DEVICE_REVOKED' ? 'Device revoked' : 'Device not active'));
-    return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
+  app.addHook('onSend', async (req, reply) => {
+    reply.header('x-request-id', req.id);
   });
+  // SEC-22: SameSite=Strict cookie + required custom header + Origin check on every state change.
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method === 'GET' || req.method === 'HEAD') return;
+    const origin = req.headers.origin;
+    if (req.headers['x-wdb-request'] !== '1' || (origin !== undefined && origin !== opts.origin)) {
+      return deny(reply, 403, 'CSRF_FAILED', 'Missing X-WDB-Request header or foreign Origin');
+    }
+  });
+  app.addHook('preClose', async () => streams.closeAll());
 
-  app.get('/api/v1/events', async (req, reply) => {
-    const q = PullQuery.safeParse(req.query);
-    if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
-    const [head] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
-    return { headSeq: head?.lastSeq ?? 0, entries: await readEntries(db, q.data.after, q.data.limit) };
+  app.register(cookie);
+  app.register(rateLimit, { global: false });
+
+  const requireSession = (roles?: readonly Role[]) => async (req: FastifyRequest, reply: FastifyReply) => {
+    const token = req.cookies.wdb_sid;
+    if (!token) return deny(reply, 401, 'NO_SESSION', 'Sign in first');
+    const hash = tokenHash(token);
+    const [row] = await db
+      .select({ s: sessions, role: staff.role, staffStatus: staff.status, deviceStatus: devices.status })
+      .from(sessions)
+      .innerJoin(staff, eq(sessions.staffId, staff.staffId))
+      .innerJoin(devices, eq(sessions.deviceId, devices.deviceId))
+      .where(eq(sessions.tokenHash, hash));
+    if (!row) return deny(reply, 401, 'NO_SESSION', 'Sign in first');
+    if (row.deviceStatus === 'revoked') return deny(reply, 403, 'DEVICE_REVOKED', 'Device revoked');
+    if (row.deviceStatus !== 'active') return deny(reply, 403, 'DEVICE_NOT_ACTIVE', 'Device not active');
+    const now = Date.now();
+    if (row.s.revokedAt || row.s.expiresAt.getTime() <= now || row.s.lastSeenAt.getTime() < now - IDLE_MS || row.staffStatus !== 'active') {
+      return deny(reply, 401, 'NO_SESSION', 'Session ended');
+    }
+    if (roles && !roles.includes(row.role)) return deny(reply, 403, 'ROLE_FORBIDDEN', 'Not allowed for this role');
+    await db.update(sessions).set({ lastSeenAt: new Date(now) }).where(eq(sessions.tokenHash, hash));
+    req.auth = { staffId: row.s.staffId, role: row.role, deviceId: row.s.deviceId, tokenHash: hash };
+  };
+
+  /** Device named and signed in X-WDB-Device-Sig, or null. */
+  async function signingDevice(req: FastifyRequest) {
+    const p = parseDeviceSig(String(req.headers['x-wdb-device-sig'] ?? ''));
+    if (!p) return null;
+    const [dev] = await db.select().from(devices).where(eq(devices.deviceId, p.deviceId));
+    if (!dev) return null;
+    const path = req.url.split('?')[0] ?? '';
+    return verifyDeviceSig(p, req.method, path, publicKeyFromRaw(dev.publicKey), Math.floor(Date.now() / 1000)) ? dev : null;
+  }
+
+  app.register(async (api) => {
+    const byDevice = (req: FastifyRequest) => req.auth?.deviceId ?? req.ip;
+
+    // --- Enrollment (SEC-4) ---
+    api.post('/api/v1/devices', { config: { rateLimit: { max: 10, timeWindow: '1 hour' } } }, async (req, reply) => {
+      const b = Enroll.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid enrollment', z.flattenError(b.error)));
+      const publicKey = Buffer.from(b.data.publicKey, 'base64url');
+      const fp = fingerprint(publicKey);
+      const [row] = await db
+        .insert(devices)
+        .values({ deviceId: b.data.deviceId, publicKey, fingerprint: fp, label: b.data.label })
+        .onConflictDoNothing()
+        .returning({ id: devices.deviceId });
+      if (!row) return deny(reply, 409, 'DEVICE_EXISTS', 'Device already enrolled');
+      await audit(req, { deviceId: b.data.deviceId, action: 'DEVICE_ENROLL', outcome: 'ok' });
+      return reply.code(202).send({ status: 'pending', fingerprint: fp });
+    });
+
+    api.get('/api/v1/devices/:id/status', async (req, reply) => {
+      const p = IdParam.safeParse(req.params);
+      const dev = p.success ? await signingDevice(req) : null;
+      if (!dev || !p.success || dev.deviceId !== p.data.id) return deny(reply, 401, 'DEVICE_SIG_INVALID', 'Bad device signature');
+      return { status: dev.status, tempPrefix: dev.tempPrefix };
+    });
+
+    // --- Staff sessions (SEC-5, SEC-7) ---
+    api.post('/api/v1/sessions', async (req, reply) => {
+      const b = SignIn.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid sign-in', z.flattenError(b.error)));
+      const dev = await signingDevice(req);
+      if (!dev) return deny(reply, 401, 'DEVICE_SIG_INVALID', 'Bad device signature');
+      if (dev.status === 'revoked') return deny(reply, 403, 'DEVICE_REVOKED', 'Device revoked');
+      if (dev.status !== 'active') return deny(reply, 403, 'DEVICE_NOT_ACTIVE', 'Device not active');
+
+      const [{ n } = { n: 0 }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(auditLog)
+        .where(and(eq(auditLog.deviceId, dev.deviceId), eq(auditLog.action, 'SIGNIN_FAIL'), gt(auditLog.serverTime, new Date(Date.now() - LOCK_MS))));
+      if (n >= MAX_DEVICE_FAILURES) return deny(reply, 429, 'SIGNIN_PAUSED', 'Too many failed sign-ins on this device');
+
+      const { staffId, pin } = b.data;
+      const fail = async (code: string, status = 401) => {
+        await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_FAIL', outcome: 'denied', code });
+        return deny(reply, status, code, code === 'ACCOUNT_LOCKED' ? 'Account locked for 15 minutes' : 'Staff ID or PIN not recognised');
+      };
+      const [s] = await db.select().from(staff).where(eq(staff.staffId, staffId));
+      if (s?.lockedUntil && s.lockedUntil.getTime() > Date.now()) return fail('ACCOUNT_LOCKED');
+      // Hash even for unknown staff, so timing does not reveal which IDs exist.
+      const ok = await checkPin(pin, s?.pinHash ?? Buffer.alloc(32), s?.pinSalt ?? Buffer.alloc(16));
+      if (!s || s.status !== 'active' || !ok) {
+        if (s) {
+          const [u] = await db
+            .update(staff)
+            .set({ failedAttempts: sql`${staff.failedAttempts} + 1` })
+            .where(eq(staff.staffId, staffId))
+            .returning({ failedAttempts: staff.failedAttempts });
+          if ((u?.failedAttempts ?? 0) >= MAX_PIN_FAILURES) {
+            await db.update(staff).set({ failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) }).where(eq(staff.staffId, staffId));
+            await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_LOCKED', outcome: 'denied' });
+          }
+        }
+        return fail('SIGNIN_FAILED');
+      }
+
+      await db.update(staff).set({ failedAttempts: 0, lockedUntil: null }).where(eq(staff.staffId, staffId));
+      const token = newToken();
+      const expiresAt = new Date(Date.now() + SESSION_MS);
+      await db.insert(sessions).values({ tokenHash: tokenHash(token), staffId, deviceId: dev.deviceId, expiresAt });
+      await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_OK', outcome: 'ok' });
+      reply.setCookie('wdb_sid', token, { httpOnly: true, secure: true, sameSite: 'strict', path: '/api', maxAge: SESSION_MS / 1000 });
+      // offlineUntil: how long the device may accept this staff member's PIN offline (SEC-7).
+      return reply.code(201).send({ staffId, role: s.role, expiresAt: expiresAt.toISOString(), offlineUntil: expiresAt.toISOString() });
+    });
+
+    api.delete('/api/v1/sessions/current', { onRequest: requireSession() }, async (req, reply) => {
+      const a = req.auth as Auth;
+      await db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.tokenHash, a.tokenHash));
+      await audit(req, { staffId: a.staffId, deviceId: a.deviceId, action: 'SIGNOUT', outcome: 'ok' });
+      return reply.clearCookie('wdb_sid', { path: '/api' }).code(204).send();
+    });
+
+    // --- Log (FR-4, FR-5) ---
+    api.post(
+      '/api/v1/events',
+      { onRequest: requireSession(), config: { rateLimit: { max: 60, timeWindow: '1 minute', keyGenerator: byDevice, hook: 'preHandler' } } },
+      async (req, reply) => {
+        if (inflight >= maxInflight) return reply.header('retry-after', '5').code(503).send(error('BACKPRESSURE', 'Server busy, retry shortly'));
+        const body = Batch.safeParse(req.body);
+        if (!body.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid batch', z.flattenError(body.error)));
+        if (body.data.deviceId !== req.auth?.deviceId) return deny(reply, 403, 'DEVICE_MISMATCH', 'Batch is not from the signed-in device');
+        inflight++;
+        try {
+          const out = await appendBatch(db, body.data.deviceId, body.data.events, { requestId: req.id });
+          if (!out.ok) return deny(reply, out.status, out.code, out.code === 'DEVICE_REVOKED' ? 'Device revoked' : 'Device not active');
+          if (out.results.some((r) => r.status === 'appended')) bus.emit('appended');
+          return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
+        } finally {
+          inflight--;
+        }
+      },
+    );
+
+    api.get(
+      '/api/v1/events',
+      { onRequest: requireSession(), config: { rateLimit: { max: 120, timeWindow: '1 minute', keyGenerator: byDevice, hook: 'preHandler' } } },
+      async (req, reply) => {
+        const q = PullQuery.safeParse(req.query);
+        if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
+        const [head] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
+        return { headSeq: head?.lastSeq ?? 0, entries: await readEntries(db, q.data.after, q.data.limit) };
+      },
+    );
+
+    api.get('/api/v1/stream', { onRequest: requireSession() }, async (req, reply) => {
+      streams.handle(req, reply, (req.auth as Auth).deviceId);
+    });
+
+    // --- Admin (SEC-6, SEC-8) ---
+    const admin = requireSession(['admin']);
+    api.get('/api/v1/admin/devices', { onRequest: admin }, async () => ({
+      devices: await db
+        .select({
+          deviceId: devices.deviceId,
+          label: devices.label,
+          status: devices.status,
+          fingerprint: devices.fingerprint,
+          tempPrefix: devices.tempPrefix,
+          enrolledAt: devices.enrolledAt,
+          lastSeenAt: devices.lastSeenAt,
+        })
+        .from(devices)
+        .orderBy(desc(devices.enrolledAt)),
+    }));
+
+    api.post('/api/v1/admin/devices/:id/approve', { onRequest: admin }, async (req, reply) => {
+      const p = IdParam.safeParse(req.params);
+      if (!p.success) return deny(reply, 404, 'NOT_FOUND', 'Device not found');
+      try {
+        const tempPrefix = await approveDevice(db, p.data.id, req.auth?.staffId ?? null);
+        await audit(req, { staffId: req.auth?.staffId ?? null, deviceId: p.data.id, action: 'DEVICE_APPROVE', outcome: 'ok' });
+        return { status: 'active', tempPrefix };
+      } catch (e) {
+        if (e instanceof AdminError) return deny(reply, e.code === 'NOT_FOUND' ? 404 : 409, e.code, e.message);
+        throw e;
+      }
+    });
+
+    api.post('/api/v1/admin/devices/:id/revoke', { onRequest: admin }, async (req, reply) => {
+      const p = IdParam.safeParse(req.params);
+      if (!p.success) return deny(reply, 404, 'NOT_FOUND', 'Device not found');
+      try {
+        await revokeDevice(db, p.data.id);
+      } catch (e) {
+        if (e instanceof AdminError) return deny(reply, 404, e.code, e.message);
+        throw e;
+      }
+      streams.close(p.data.id);
+      await audit(req, { staffId: req.auth?.staffId ?? null, deviceId: p.data.id, action: 'DEVICE_REVOKE', outcome: 'ok' });
+      return { status: 'revoked' };
+    });
   });
 
   return app;
 }
+
