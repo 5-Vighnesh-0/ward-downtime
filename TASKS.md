@@ -22,8 +22,8 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [ ] Audit log (FR-14, SEC-18). Audit rows written (SEC-18); view/export endpoints come with the M3 audit screen
 
 ## M3: Offline PWA (`apps/web`)
-- [ ] IndexedDB store and unsynced queue (FR-2)
-- [ ] Sync loop with backoff, pending/confirmed/conflict states (FR-10)
+- [x] IndexedDB store and unsynced queue (FR-2)
+- [x] Sync loop with backoff, pending/confirmed/conflict states (FR-10). M3a: engine and states; badges come with the board UI
 - [ ] Board UI, admit/discharge/transfer/rename (FR-1, FR-2)
 - [ ] Persistent storage request, unsynced counter, file export fallback (FR-12)
 - [ ] Service worker, install flow

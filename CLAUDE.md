@@ -14,7 +14,7 @@ Offline-first hospital ward bed board. Event-sourced log, server-assigned order,
 - Ordering never depends on client clocks. Client times are for display and audit only.
 
 ## Stack
-TypeScript strict, pnpm + Turborepo. Shared reducer package used by client and server. React 19 + Vite PWA, Dexie/IndexedDB. Fastify + Postgres 16 + Drizzle. Caddy + internal CA. Docker Compose. Vitest, fast-check, Playwright, Toxiproxy. Also approved: Zod, Workbox via vite-plugin-pwa, TanStack Query (online admin reads only), Zustand, Tailwind, Radix UI, Pino, step-ca, pg, @fastify/cookie, @fastify/rate-limit (see design.md §3.3, §16). Dev only: eslint, typescript-eslint, @types/node, @types/pg, drizzle-kit, @faker-js/faker; Synthea runs from its release jar (Java 17+). OpenTelemetry is deferred out of v1. Do not add a dependency outside this list without asking.
+TypeScript strict, pnpm + Turborepo. Shared reducer package used by client and server. React 19 + Vite PWA, Dexie/IndexedDB. Fastify + Postgres 16 + Drizzle. Caddy + internal CA. Docker Compose. Vitest, fast-check, Playwright, Toxiproxy. Also approved: Zod, Workbox via vite-plugin-pwa, TanStack Query (online admin reads only), Zustand, Tailwind, Radix UI, Pino, step-ca, pg, @fastify/cookie, @fastify/rate-limit, @vitejs/plugin-react, @tailwindcss/vite (see design.md §3.3, §16). Dev only: eslint, typescript-eslint, @types/node, @types/pg, @types/react, @types/react-dom, drizzle-kit, fake-indexeddb, @faker-js/faker; Synthea runs from its release jar (Java 17+). OpenTelemetry is deferred out of v1. Do not add a dependency outside this list without asking.
 
 ## Layout
 ```

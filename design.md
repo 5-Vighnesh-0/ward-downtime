@@ -463,12 +463,13 @@ CREATE TABLE exports (
 
 | Store | Key | Indexes | Contents |
 |---|---|---|---|
-| `events` | `serverSeq` | `&eventId` | Confirmed `LedgerEntry` mirror (full log since genesis) |
-| `outbox` | `deviceSeq` | `&eventId`, `state` | Signed events not yet confirmed; `state: 'queued'\|'sending'\|'refused'` |
+| `events` | `serverSeq` | `&event.eventId` | Confirmed `LedgerEntry` mirror (full log since genesis) |
+| `outbox` | `deviceSeq` | `&eventId`, `state` | Signed events not yet in `events`; `state: 'queued'\|'sending'\|'acked'\|'refused'`. `acked` = the server confirmed it, the ledger entry is not pulled yet, so it still shows in the view |
 | `snapshot` | `'board'` | none | `{ atSeq, headHash, board }`, rewritten every 500 applied events (local cache; speeds cold start) |
-| `meta` | key string | none | `deviceId`, `tempPrefix`, `tempCounter`, `lastDeviceSeq`, `lastServerSeq`, `headHash`, `clockOffsetMs`, `persistGranted`, `lastExportAt`, `schemaVersion` |
+| `meta` | `'device'` | none | One record: `deviceId`, `label`, `tempPrefix`, `tempCounter`, `lastDeviceSeq`, `lastServerSeq`, `headHash`, `hlcWallMs`, `hlcCounter`, `persistGranted`, `lastPushAt`. Fields such as `lastExportAt` are added with the feature that needs them |
 | `keys` | `'device'` | none | `CryptoKeyPair` (private key `extractable: false`), stored via structured clone |
-| `creds` | `staffId` | none | `{ role, exp, pinVerifier: {salt, hash, iterations}, failCount }` |
+| `session` | `'current'` | none | Who is signed in online: `{ staffId, role, expiresAt }`. The cookie itself is HttpOnly and never readable here |
+| `creds` (M3b) | `staffId` | none | `{ role, exp, pinVerifier: {salt, hash, iterations}, failCount }` |
 
 Minimum fields (SEC-14, SEC-16): patient data on the device is limited to `label` and `patientId`. Nothing else is collected.
 
@@ -479,11 +480,11 @@ Minimum fields (SEC-14, SEC-16): patient data on the device is limited to `label
 ### 5.1 Local write path (offline-capable)
 
 1. The UI calls `syncEngine.record(type, payload)`.
-2. In one Dexie transaction: read and increment `meta.lastDeviceSeq` (and `tempCounter` for ADMIT), build the envelope, sign it with the device key, and put it in `outbox` as `queued`.
+2. In one Dexie transaction, reserve `meta.lastDeviceSeq + 1`, the next `tempCounter` (ADMIT only) and the next HLC value. Then build the envelope, check it against the schema, sign it with the device key and put it in `outbox` as `queued`. Signing runs after the reservation commits, because a WebCrypto promise inside an IndexedDB transaction ends the transaction early.
 3. Recompute the **optimistic view**: `replay(outbox, confirmedBoard)`, then publish to Zustand. Target: visible in < 100 ms (NFR-Latency).
 4. Trigger a push attempt (it is a no-op when offline).
 
-The sequence number and counters are committed in the same transaction as the event, so a crash cannot reuse an ID.
+The counters are committed before the event exists, so a crash can skip a number but never reuse one. Skipping is allowed: `deviceSeq` only has to increase (ADR-006).
 
 ### 5.2 Endpoints
 
@@ -582,7 +583,7 @@ Other per-event statuses: `{"status":"duplicate","serverSeq":97}` and `{"status"
 - **Polling fallback.** If SSE fails 3 times in 60 s, poll `GET /events?after=` every 15 s and retry SSE every 5 min.
 - **Gap check.** The client applies entries only if `serverSeq == lastServerSeq + 1` and `prevHash == meta.headHash`. Otherwise it pulls; repeated mismatch → **chain alert** (§9.6).
 - **Push backoff.** Exponential with full jitter: `delay = random(0, min(60 s, 1 s × 2^attempt))`. Reset on success. Honour `Retry-After` on `429`/`503`. Push immediately on the `online` event, SSE open, or app foreground.
-- **Ack reconciliation.** On `appended`/`duplicate`: delete from outbox, insert into `events` if not already there (SSE may have delivered it), recompute the optimistic view.
+- **Ack reconciliation.** On `appended`/`duplicate`: mark the outbox item `acked`, then pull. The push reply has no hashes, so the entry only enters `events` through pull or SSE, which check the chain. Applying an entry deletes the outbox item with the same `eventId` (SSE may get there first).
 
 ### 5.7 Limits and backpressure (SEC-23)
 
@@ -1352,7 +1353,7 @@ Order matches prd.md §10 and TASKS.md. Each milestone ends with tests passing, 
 | **M0 Setup** | pnpm + Turborepo, TS strict, ESLint, `tools/` package (`seed`, `synthea:labels`, `check:synthetic`), CI with the jobs that have work: quality, deps, secrets, sast, trivy + SBOM, synthea. Integration, e2e and nightly jobs arrive in M2/M3 | CI green; gitleaks/Semgrep/Trivy/SBOM jobs run | Synthea needs Java 17+ (CI job installs Temurin 21; local runs need a JDK) |
 | **M1 Shared core** | Zod schemas, reducer (all §6.3 rules, E1–E14), property tests PB-01..06. JCS, Ed25519, HLC and PB-07/08 moved to M2; sim harness to M2/M3 | All §6.3 rows and E1–E13 have unit tests; PB suite passes 1000 runs; sim reproducible by seed | Reducer rule gaps found late; mitigation: tests first, sim early |
 | **M2 Ward server** | **M2a (done):** schema + migrations, append-only grants and triggers, canonical JSON, Ed25519 verify, push/pull, idempotency, ordering, hash chain, `verify-chain`. **M2b (done):** enrollment, admin approve/revoke, bootstrap CLI, PIN sign-in with lockout, sessions, CSRF, rate limits, backpressure, audit rows, SSE. **Moved to M3/M5:** staff and audit-view endpoints (M3, with their screens), clock-skew recording (SEC-28) and alerts (SEC-20) (M5) | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
-| **M3 Offline PWA** | Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
+| **M3 Offline PWA** | **M3a (done):** Dexie stores, device key and signing, HLC, outbox write path, push with backoff, pull with chain check, SSE with resync and polling fallback, optimistic view, revoke wipe; tested against the real server. **M3b:** screens and server staff/audit-view endpoints. **M3c:** Playwright E2E. Full list: Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
 | **M4 Conflicts + export** | Conflicts screen, resolve dialog, Unplaced, recovery export JSON+CSV in `.wdbx`, decrypt CLI, queue import | E2E-01 (both orders), E2E-05, E2E-06 pass; UNIT-EXPORT pass | Clinician acceptance of the human-resolve flow is untested (prd.md §9) |
 | **M5 Hardening** | Caddy + step-ca + TLS runbook, CSP/headers, rate limits, alerts, backups/restore, ransomware replay, Toxiproxy suite, ASVS L2 review, a11y pass, threat model review | All SEC-T-*, FI-*, A11Y-* pass; SIM-03/04 pass; restore drill and RB-TLS drill done and timed; security.md checklist ticked | CA setup mistakes; MDM availability for the demo |
 | **M6 v2** | `TASK_*` and `HANDOFF_NOTE_ADDED` events, reducer rules, UI, data-minimization review for notes (SEC-16, OQ-8) | New property tests extend PB-01/03; security.md updated (SEC-30) | Free-text notes may pull in clinical data; needs policy before build |
