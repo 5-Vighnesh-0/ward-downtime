@@ -4,7 +4,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 
 ## M0: Setup
 - [x] Monorepo (pnpm, Turborepo), TypeScript strict, lint, CI skeleton
-- [ ] Secret scan, SAST, dependency audit in CI (SEC-29). Passed locally with the CI versions; tick after the first GitHub run
+- [x] Secret scan, SAST, dependency audit in CI (SEC-29). First GitHub run green 2026-11-12
 - [x] Synthetic data script + real-identifier CI check (SEC-17)
 
 ## M1: Shared core (`packages/shared`)
@@ -19,21 +19,22 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Server-assigned order (FR-5, SEC-12)
 - [x] Signature, device and role checks (SEC-4 to SEC-9)
 - [x] SSE live updates
-- [ ] Audit log (FR-14, SEC-18). Audit rows written (SEC-18); view/export endpoints come with the M3 audit screen
+- [x] Audit log (FR-14, SEC-18). Rows and view (M3b); export comes with the M4 recovery export
 
 ## M3: Offline PWA (`apps/web`)
 - [x] IndexedDB store and unsynced queue (FR-2)
-- [x] Sync loop with backoff, pending/confirmed/conflict states (FR-10). M3a: engine and states; badges come with the board UI
-- [ ] Board UI, admit/discharge/transfer/rename (FR-1, FR-2)
-- [ ] Persistent storage request, unsynced counter, file export fallback (FR-12)
-- [ ] Service worker, install flow
+- [x] Sync loop with backoff, pending/confirmed/conflict states (FR-10)
+- [x] Board UI, admit/discharge/transfer/rename (FR-1, FR-2)
+- [x] Persistent storage request, unsynced counter, file export fallback (FR-12). Server-side import of the file is M4
+- [ ] Service worker, install flow. SW and update prompt built (M3b); Home Screen install on a real iPad is checked in M3c
+- [ ] Playwright E2E on Chromium, Firefox, WebKit (M3c)
 
 ## M4: Conflicts and export
 - [ ] Charge nurse conflict queue (FR-7)
 - [ ] Recovery export JSON + CSV (FR-11)
 
 ## M5: Hardening
-- [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Server side done in M2b; client idle lock and offline sign-in in M3
+- [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Done in M2b and M3b except the per-ward idle lock setting
 - [ ] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3)
 - [ ] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31)
 - [ ] Backup/restore drill, runbooks (SEC-27)

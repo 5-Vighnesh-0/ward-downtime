@@ -72,7 +72,9 @@ export async function enroll(db: WdbDb, net: Net, label: string): Promise<string
   }
   const { meta, pair } = await deviceKey(db);
   const res = await request(net, 'POST', '/api/v1/devices', { deviceId: meta.deviceId, publicKey: await rawPublicKey(pair), label: meta.label });
-  return ((await res.json()) as { fingerprint: string }).fingerprint;
+  const { fingerprint } = (await res.json()) as { fingerprint: string };
+  await db.meta.update('device', { fingerprint });
+  return fingerprint;
 }
 
 /** Polls approval. On approval the server's temp-ID prefix is stored (§7.1). */

@@ -42,12 +42,24 @@ export interface Meta {
   hlcCounter: number;
   persistGranted: boolean;
   lastPushAt: number; // device clock, display only
+  fingerprint?: string; // shown on the enroll screen until the admin approves
 }
 
 export interface Session {
   staffId: string;
   role: Role;
   expiresAt: string;
+}
+
+/** Offline sign-in (design.md §9.4.3): a PBKDF2 verifier of the PIN, valid until `exp`. */
+export interface Cred {
+  staffId: string;
+  role: Role;
+  exp: string;
+  salt: string; // base64url
+  hash: string; // base64url
+  iterations: number;
+  failCount: number;
 }
 
 export interface KeyRecord {
@@ -62,6 +74,7 @@ export type WdbDb = Dexie & {
   meta: EntityTable<Meta & { id: 'device' }, 'id'>;
   keys: EntityTable<KeyRecord, 'id'>;
   session: EntityTable<Session & { id: 'current' }, 'id'>;
+  creds: EntityTable<Cred, 'staffId'>;
 };
 
 export function openDb(name = 'wdb'): WdbDb {
@@ -73,6 +86,7 @@ export function openDb(name = 'wdb'): WdbDb {
     meta: 'id',
     keys: 'id',
     session: 'id',
+    creds: 'staffId',
   });
   return db;
 }

@@ -46,6 +46,7 @@ export interface TestNet extends Net {
   offline: boolean;
   blockPush: boolean; // pushes fail but pulls work
   loseReplies: boolean; // the server gets the request but the reply is lost (FR-4 retry safety)
+  proxyDown: boolean; // a reverse proxy answers 502 because the ward server is down
 }
 
 function testNet(baseUrl: string): TestNet {
@@ -56,7 +57,9 @@ function testNet(baseUrl: string): TestNet {
     offline: false,
     blockPush: false,
     loseReplies: false,
+    proxyDown: false,
     fetch: async (input, init = {}) => {
+      if (net.proxyDown) return new Response('Bad Gateway', { status: 502 });
       const isPush = init.method === 'POST' && String(input).endsWith('/api/v1/events');
       if (net.offline || (isPush && net.blockPush)) throw new TypeError('fetch failed');
       const headers = new Headers(init.headers);

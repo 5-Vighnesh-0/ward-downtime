@@ -129,8 +129,8 @@ prd.md defines FR-1 to FR-15. security.md defines SEC-1 to SEC-31. prd.md §6 NF
 ```mermaid
 flowchart LR
   subgraph Device["Ward device: tablet or PC"]
-    UI["React 19 UI<br/>Radix + Tailwind"]
-    ZS["Zustand store<br/>UI state + board view"]
+    UI["React 19 UI<br/>Tailwind + native dialog"]
+    ZS["useSyncExternalStore<br/>engine state → React"]
     SE["Sync engine<br/>outbox, push, pull, SSE"]
     RD1["shared reducer<br/>pure"]
     DX[("Dexie / IndexedDB<br/>events, outbox, snapshot, meta, keys")]
@@ -210,8 +210,8 @@ sequenceDiagram
 | Dexie | Transactions, versioned migrations over IndexedDB | localForage: no indexes/transactions for the outbox | Yes |
 | `navigator.storage.persist()` | Asks browser not to evict | None (it is the platform API) | Yes, but not guaranteed on Safari (§8.2) |
 | TanStack Query | Caching for online-only reads (admin lists, audit, health) | SWR: equivalent; TQ is mandated | **Flagged: unsuitable for the board/log.** It is a cache, not a durable queue. The board comes from Dexie through the sync engine. TQ is limited to online-only admin reads (§10.2). |
-| Zustand | Small store for UI state and the derived board view | Redux Toolkit: more ceremony for the same job | Yes |
-| Tailwind + Radix UI | Compiled CSS (CSP-safe), accessible primitives (dialog, focus trap) | MUI: runtime CSS-in-JS conflicts with strict CSP | Yes |
+| Zustand | Small store for UI state and the derived board view | Redux Toolkit: more ceremony for the same job | Approved but **not used** (M3b): the engine already publishes its state, and React's `useSyncExternalStore` reads it with no dependency |
+| Tailwind + Radix UI | Compiled CSS (CSP-safe), accessible primitives (dialog, focus trap) | MUI: runtime CSS-in-JS conflicts with strict CSP | Tailwind yes. Radix approved but **not used** (M3b): the native `<dialog>` with `showModal()` traps focus, closes on Esc and restores focus in every target browser |
 | WebCrypto Ed25519 | Small fast signatures; native in Chrome 137+, Firefox 129+, Safari 17+ ([caniuse](https://caniuse.com/mdn-api_subtlecrypto_importkey_ed25519)) | ECDSA P-256: wider legacy support, but signature malleability and more parameters to get wrong | Yes for "current browsers". Edge support is assumed from Chromium and is NOT VERIFIED. |
 | Node 22 + Fastify | Schema-first routes, low overhead, built-in body limit | Express: no native schema/body-limit model | Yes |
 | PostgreSQL 16 + Drizzle | Transactions, unique constraints for idempotency, row lock for ordering; typed SQL migrations | SQLite: fine for scale, but no role separation for the append-only grants; Prisma: heavier engine binary | Yes |
@@ -481,7 +481,7 @@ Minimum fields (SEC-14, SEC-16): patient data on the device is limited to `label
 
 1. The UI calls `syncEngine.record(type, payload)`.
 2. In one Dexie transaction, reserve `meta.lastDeviceSeq + 1`, the next `tempCounter` (ADMIT only) and the next HLC value. Then build the envelope, check it against the schema, sign it with the device key and put it in `outbox` as `queued`. Signing runs after the reservation commits, because a WebCrypto promise inside an IndexedDB transaction ends the transaction early.
-3. Recompute the **optimistic view**: `replay(outbox, confirmedBoard)`, then publish to Zustand. Target: visible in < 100 ms (NFR-Latency).
+3. Recompute the **optimistic view**: `replay(outbox, confirmedBoard)`, then publish to subscribers (React reads it with `useSyncExternalStore`). Target: visible in < 100 ms (NFR-Latency).
 4. Trigger a push attempt (it is a no-op when offline).
 
 The counters are committed before the event exists, so a crash can skip a number but never reuse one. Skipping is allowed: `deviceSeq` only has to increase (ADR-006).
@@ -505,7 +505,7 @@ Base path `/api/v1`. JSON only. Every error uses one shape: `{"error":{"code":"�
 | `POST /recovery/replay` | admin | Re-seed server from device-held log (§11.4) |
 | `GET /admin/devices`, `POST /admin/devices/{id}/approve`, `POST /admin/devices/{id}/revoke` | admin | Device lifecycle |
 | `GET /admin/staff`, `POST /admin/staff`, `PATCH /admin/staff/{id}` | admin | Staff management |
-| `GET /audit?after={id}&limit={n≤500}`, `GET /audit/export` | charge/admin | FR-14 |
+| `GET /audit?before={id}&limit={n≤500}&staffId&deviceId&action` (newest first; `next` is the `before` for the next page), `GET /audit/export` (M4) | charge/admin | FR-14 |
 | `GET /admin/health` | admin | Head seq, chain status, device lag, skew, alerts |
 
 ### 5.3 Push: request, response, idempotency
@@ -579,7 +579,7 @@ Other per-event statuses: `{"status":"duplicate","serverSeq":97}` and `{"status"
 ### 5.6 Pull, live push, backoff
 
 - **Bootstrap.** A new or wiped device pulls the whole log with `GET /events?after=0` in pages of 1000, verifying the hash chain as it goes (100k events is about 60 MB on a LAN; budget PERF-03). Later cold starts load the local snapshot. A server snapshot endpoint is added only if PERF-03 fails.
-- **Live.** `GET /stream` (SSE). The server sends `id: <serverSeq>` / `event: appended` / `data: <LedgerEntry JSON>`, plus a `: ping` comment every 20 s. On reconnect the browser sends `Last-Event-ID` and the server replays the missed entries (up to 1000, then `event: resync` → the client pulls).
+- **Live.** `GET /stream` (SSE). The server first writes a `: open` comment, so proxies pass the headers on at once, then sends `id: <serverSeq>` / `event: appended` / `data: <LedgerEntry JSON>`, plus a `: ping` comment every 20 s. On reconnect the browser sends `Last-Event-ID` and the server replays the missed entries (up to 1000, then `event: resync` → the client pulls).
 - **Polling fallback.** If SSE fails 3 times in 60 s, poll `GET /events?after=` every 15 s and retry SSE every 5 min.
 - **Gap check.** The client applies entries only if `serverSeq == lastServerSeq + 1` and `prevHash == meta.headHash`. Otherwise it pulls; repeated mismatch → **chain alert** (§9.6).
 - **Push backoff.** Exponential with full jitter: `delay = random(0, min(60 s, 1 s × 2^attempt))`. Reset on success. Honour `Retry-After` on `429`/`503`. Push immediately on the `online` event, SSE open, or app foreground.
@@ -936,7 +936,7 @@ This table is updated in the same PR as any architecture change (SEC-30, PR temp
 **9.2.3 Revocation.**
 - Planned removal: let the tablet sync (or save its unsynced changes to file, §8.4), then revoke.
 - `revoke`: the next request returns `403 DEVICE_REVOKED`. The client then deletes the Dexie database (all stores), unregisters the SW caches, and shows *"This tablet has been removed from the ward board. Give it to IT."* This is the remote wipe (SEC-14). Revocation takes effect at next contact (SEC-8). Until then the device works offline with cached credentials (residual risk, §9.10).
-- Revoking a staff member deletes their sessions server-side. Devices drop that staff member's `creds` on the next sync response, which includes `revokedStaff: StaffId[]` since the device's last sync.
+- Revoking a staff member deletes their sessions server-side. Devices drop that staff member's `creds` on the next pull: every `GET /events` response includes `disabledStaff: StaffId[]` (all currently disabled staff; the list is short). Re-enabling does not revive old sessions.
 
 ### 9.3 Transport and browser hardening (SEC-1, SEC-2, SEC-3)
 
@@ -955,7 +955,7 @@ This table is updated in the same PR as any architecture change (SEC-30, PR temp
 
 **9.4.2 Session cookie.** `wdb_sid=<32 random bytes base64url>; HttpOnly; Secure; SameSite=Strict; Path=/api; Max-Age=43200`. Only SHA-256 of the token is stored. The absolute lifetime defaults to 12 h (configurable); the server-side idle expiry is 30 min without requests. CSRF defenses: SameSite=Strict, required custom header `X-WDB-Request: 1` on all non-GET, and an `Origin` check equal to the configured hostname. Cookie parsing uses `@fastify/cookie`.
 
-**9.4.3 Offline sign-in (SEC-7).** After a successful online sign-in the device stores `{staffId, role, exp: now + 12 h}` from the response plus a PIN verifier: PBKDF2-SHA256 (WebCrypto), 600,000 iterations, 16-byte salt. Offline sign-in checks the PIN against the verifier and the expiry. The record is not signed: editing `role` locally only changes what the UI offers, because the server re-checks the role of every pushed event (§9.5). After 5 local failures, that staff member's offline credential is deleted and online sign-in is required. The idle lock defaults to **5 min**, is configurable per ward (1–15 min), and needs the PIN to unlock.
+**9.4.3 Offline sign-in (SEC-7).** After a successful online sign-in the device stores `{staffId, role, exp: now + 12 h}` from the response plus a PIN verifier: PBKDF2-SHA256 (WebCrypto), 600,000 iterations, 16-byte salt. Offline sign-in checks the PIN against the verifier and the expiry. The record is not signed: editing `role` locally only changes what the UI offers, because the server re-checks the role of every pushed event (§9.5). After 5 local failures, that staff member's offline credential is deleted and online sign-in is required. The idle lock defaults to **5 min** and needs the PIN to unlock (checked on the device against the verifier). The app also starts locked whenever it loads with someone signed in, so a reload or restart never skips the lock. A per-ward setting (1–15 min) is not built yet; the 5 min value is fixed in M3b. PBKDF2 at 600,000 iterations on an iPad is **NOT VERIFIED** for speed (measure in M3c).
 *Trade-off:* a 6-digit PIN verifier on a stolen tablet can be brute-forced offline. Mitigations are MDM device lock, short token life, and revocation. This is stated as a residual risk.
 
 ### 9.5 Roles (SEC-6), enforced server-side by route and event type
@@ -1057,7 +1057,7 @@ ASVS: OWASP ASVS **5.0.0** (released 30 May 2025, [OWASP ASVS](https://owasp.org
       <BoardScreen>
         <BoardFilters/>                 // All | Empty | Occupied | Conflict | Pending
         <BedGrid>  <BedCard/>×N         // status + occupant + SyncBadge
-        <BedSheet>  (Radix Dialog)
+        <BedSheet>  (native <dialog>)
           <AdmitForm/> <TransferPicker/> <RenameForm/> <DischargeConfirm/> <BedHistory/>
       <ConflictsScreen>  <ConflictCard/>×N  <ResolveDialog/>
       <UnplacedScreen>   <UnplacedRow/>×N   <AdmitForm/>
@@ -1071,7 +1071,7 @@ ASVS: OWASP ASVS **5.0.0** (released 30 May 2025, [OWASP ASVS](https://owasp.org
 </App>
 ```
 
-State ownership: `syncEngine` (plain TS, no React) owns Dexie, the outbox, SSE and the reducer. It publishes `{board, outbox, conn, unsynced}` to a Zustand store. Components read via selectors. TanStack Query is used only in Audit and Admin (online-only reads). Those screens show "Needs ward server" when offline.
+State ownership: `syncEngine` (plain TS, no React) owns Dexie, the outbox, SSE and the reducer. It publishes `{view, confirmed, outbox, unsynced, online, alert}`; components read it with `useSyncExternalStore`. Audit and Admin fetch directly (online only; TanStack Query was not needed) and show "Needs the ward server" when offline.
 
 ### 10.3 Key interaction flows
 
@@ -1097,7 +1097,7 @@ There is no drag-and-drop anywhere (WCAG 2.5.7).
 - **Targets:** every control is at least **48 × 48 CSS px** with ≥ 8 px gaps. That exceeds PRD 44 px and WCAG 2.2 SC 2.5.8, which requires 24 × 24 at AA ([W3C Understanding 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html)). Primary actions are 56 px tall and full-width in sheets. PIN keys are 72 × 72.
 - **Glove use:** no hover-only UI, no long-press or swipe-only actions, no drag (2.5.7). Each action button is disabled for 600 ms after activation to absorb double taps from thick gloves. Primary buttons sit in the bottom half for one-handed use.
 - **Contrast:** text ≥ 4.5:1, large text and UI components ≥ 3:1 (1.4.3, 1.4.11). Status is always icon + text + border pattern (1.4.1).
-- **Keyboard:** everything is reachable; logical order (2.4.3); visible 3 px focus ring (2.4.7); focus not obscured by the sticky top bar (2.4.11) via `scroll-margin-top`; Radix Dialog traps and restores focus; `Esc` closes sheets.
+- **Keyboard:** everything is reachable; logical order (2.4.3); visible 3 px focus ring (2.4.7); focus not obscured by the sticky top bar (2.4.11) via `scroll-margin-top`; the native `<dialog>` traps and restores focus; `Esc` closes sheets.
 - **Screen readers:** native buttons; landmarks (`header`, `main`, `nav`); one `h1` per screen; `aria-live="polite"` for "Change confirmed" / "New conflict on bed 4"; `role="alert"` only for errors that block an action.
 - **Forms:** visible labels; errors next to the field and announced (3.3.1); paste allowed in the PIN field, and the PIN is not a cognitive test because a staff picker plus a numeric PIN is the standard pattern (3.3.8 — whether a PIN qualifies for the exception is NOT VERIFIED; OQ-4 passkeys would satisfy it). The temp ID is auto-filled (3.3.7 redundant entry).
 - **Timing:** the idle lock warns 30 s ahead with **Stay signed in** (2.2.1). It is configurable 1–15 min.
@@ -1137,9 +1137,9 @@ Copy rules: verbs on buttons, name the patient and bed in confirmations, no "Are
 | Heading | Decision |
 |---|---|
 | Visual theme & atmosphere | Calm, clinical, high-contrast working tool. Dense but scannable grid. No decorative imagery, no gradients, no brand mimicry |
-| Color palette & roles | Semantic tokens only: `--surface`, `--surface-raised`, `--text`, `--text-muted`, `--border`, `--focus`, `--status-occupied`, `--status-pending`, `--status-conflict`, `--status-error`. Starting values from the ui-ux-pro-max healthcare query (primary `#0891B2`, foreground `#164E63`, destructive `#DC2626`) **must be contrast-checked**; each status also has an icon and pattern |
+| Color palette & roles | Semantic tokens only: `--surface`, `--surface-raised`, `--text`, `--text-muted`, `--border`, `--focus`, `--status-occupied`, `--status-pending`, `--status-conflict`, `--status-error`. Values in `apps/web/src/styles/tokens.css`, contrast-checked on white and on the raised surface: text 17.9:1, muted 7.6:1, border 4.8:1, occupied `#0E7490` 5.4:1, pending `#92400E` 7.1:1, conflict/error `#B91C1C` 6.5:1. The starting primary `#0891B2` was only 3.7:1, so it was darkened. Each status also has an icon and text |
 | Typography rules | System font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`), no web-font fetch (SEC-3, offline). Body 18 px, bed label 22 px semibold, line-height 1.4, tabular numerals for bed numbers and times |
-| Component stylings | Radix primitives + Tailwind classes; one button style per role (primary, secondary, destructive); 8 px radius; 2 px borders |
+| Component stylings | Native elements + Tailwind classes; one button style per role (primary, secondary, destructive); 8 px radius; 2 px borders |
 | Layout principles | Bed grid: 2 columns at < 600 px, 4 at ≥ 768 px, 6 at ≥ 1200 px; 4 px spacing scale; top bar 56 px |
 | Depth & elevation | Flat; sheets use a scrim plus one shadow level |
 | Do's and don'ts | Do: icon + text for every status. Don't: colour-only status, hover tooltips for essential info, toasts that vanish before they can be read (live region + persistent My changes instead) |
@@ -1353,7 +1353,7 @@ Order matches prd.md §10 and TASKS.md. Each milestone ends with tests passing, 
 | **M0 Setup** | pnpm + Turborepo, TS strict, ESLint, `tools/` package (`seed`, `synthea:labels`, `check:synthetic`), CI with the jobs that have work: quality, deps, secrets, sast, trivy + SBOM, synthea. Integration, e2e and nightly jobs arrive in M2/M3 | CI green; gitleaks/Semgrep/Trivy/SBOM jobs run | Synthea needs Java 17+ (CI job installs Temurin 21; local runs need a JDK) |
 | **M1 Shared core** | Zod schemas, reducer (all §6.3 rules, E1–E14), property tests PB-01..06. JCS, Ed25519, HLC and PB-07/08 moved to M2; sim harness to M2/M3 | All §6.3 rows and E1–E13 have unit tests; PB suite passes 1000 runs; sim reproducible by seed | Reducer rule gaps found late; mitigation: tests first, sim early |
 | **M2 Ward server** | **M2a (done):** schema + migrations, append-only grants and triggers, canonical JSON, Ed25519 verify, push/pull, idempotency, ordering, hash chain, `verify-chain`. **M2b (done):** enrollment, admin approve/revoke, bootstrap CLI, PIN sign-in with lockout, sessions, CSRF, rate limits, backpressure, audit rows, SSE. **Moved to M3/M5:** staff and audit-view endpoints (M3, with their screens), clock-skew recording (SEC-28) and alerts (SEC-20) (M5) | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
-| **M3 Offline PWA** | **M3a (done):** Dexie stores, device key and signing, HLC, outbox write path, push with backoff, pull with chain check, SSE with resync and polling fallback, optimistic view, revoke wipe; tested against the real server. **M3b:** screens and server staff/audit-view endpoints. **M3c:** Playwright E2E. Full list: Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
+| **M3 Offline PWA** | **M3a (done):** Dexie stores, device key and signing, HLC, outbox write path, push with backoff, pull with chain check, SSE with resync and polling fallback, optimistic view, revoke wipe; tested against the real server. **M3b (done):** enroll, sign-in (online, then offline PIN verifier), idle lock, board, bed sheet (admit, move, rename, discharge), My changes with encrypted save-to-file, unsynced counter, banners, Admin (devices, staff, ward beds), Audit view, service worker with update prompt; server staff and audit-view endpoints and `disabledStaff`. **Moved:** Conflicts, Unplaced and Recovery screens and audit export to M4 (with FR-7/FR-11); board filters, per-ward lock time and clock-skew banner to M5. **M3c:** Playwright E2E. Full list: Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
 | **M4 Conflicts + export** | Conflicts screen, resolve dialog, Unplaced, recovery export JSON+CSV in `.wdbx`, decrypt CLI, queue import | E2E-01 (both orders), E2E-05, E2E-06 pass; UNIT-EXPORT pass | Clinician acceptance of the human-resolve flow is untested (prd.md §9) |
 | **M5 Hardening** | Caddy + step-ca + TLS runbook, CSP/headers, rate limits, alerts, backups/restore, ransomware replay, Toxiproxy suite, ASVS L2 review, a11y pass, threat model review | All SEC-T-*, FI-*, A11Y-* pass; SIM-03/04 pass; restore drill and RB-TLS drill done and timed; security.md checklist ticked | CA setup mistakes; MDM availability for the demo |
 | **M6 v2** | `TASK_*` and `HANDOFF_NOTE_ADDED` events, reducer rules, UI, data-minimization review for notes (SEC-16, OQ-8) | New property tests extend PB-01/03; security.md updated (SEC-30) | Free-text notes may pull in clinical data; needs policy before build |

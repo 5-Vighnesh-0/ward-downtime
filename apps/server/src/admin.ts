@@ -12,10 +12,34 @@ export async function addStaffMember(db: Db, s: { staffId: string; role: Role; d
   await db.insert(staff).values({ staffId: s.staffId, role: s.role, displayName: s.displayName, pinHash: hash, pinSalt: salt, status: 'active' });
 }
 
+/** Role, status, display name or PIN. A PIN reset clears the lockout; disabling ends every session (SEC-8). */
+export async function updateStaffMember(
+  db: Db,
+  staffId: string,
+  u: { role?: Role; status?: 'active' | 'disabled'; displayName?: string; pin?: string },
+): Promise<{ staffId: string; displayName: string; role: Role; status: string }> {
+  const pin = u.pin ? await hashPin(u.pin) : null;
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(staff)
+      .set({
+        ...(u.role ? { role: u.role } : {}),
+        ...(u.status ? { status: u.status } : {}),
+        ...(u.displayName ? { displayName: u.displayName } : {}),
+        ...(pin ? { pinHash: pin.hash, pinSalt: pin.salt, failedAttempts: 0, lockedUntil: null } : {}),
+      })
+      .where(eq(staff.staffId, staffId))
+      .returning({ staffId: staff.staffId, displayName: staff.displayName, role: staff.role, status: staff.status });
+    if (!row) throw new AdminError('NOT_FOUND', 'Staff member not found');
+    if (u.status === 'disabled') await tx.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.staffId, staffId));
+    return row;
+  });
+}
+
 export class AdminError extends Error {
   readonly code: 'NOT_FOUND' | 'NOT_PENDING';
-  constructor(code: 'NOT_FOUND' | 'NOT_PENDING') {
-    super(code === 'NOT_FOUND' ? 'Device not found' : 'Device is not pending');
+  constructor(code: 'NOT_FOUND' | 'NOT_PENDING', message = code === 'NOT_FOUND' ? 'Device not found' : 'Device is not pending') {
+    super(message);
     this.code = code;
   }
 }

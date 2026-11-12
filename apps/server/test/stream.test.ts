@@ -108,8 +108,9 @@ describe('GET /api/v1/stream', () => {
     const first = await fetch(`${base}/api/v1/stream`, { headers: { cookie }, signal: ac.signal });
     const reader = first.body?.getReader();
     await collect({ cookie }, () => true);
-    const { done } = (await reader?.read()) ?? { done: true };
-    expect(done).toBe(true);
+    let text = '';
+    for (let r = await reader?.read(); r && !r.done; r = await reader?.read()) text += new TextDecoder().decode(r.value);
+    expect(text).toBe(': open\n\n'); // the old stream ended after its opening comment
     ac.abort();
   });
 });

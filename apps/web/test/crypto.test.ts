@@ -1,11 +1,12 @@
 // The device must produce the exact bytes the server checks: signatures (SEC-9) and chain hashes (SEC-10).
+import { createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { entryHash as serverEntryHash, GENESIS_HASH } from '@wdb/server/src/chain.ts';
 import { publicKeyFromRaw, verifySignature } from '@wdb/server/src/signature.ts';
 import { parseDeviceSig, verifyDeviceSig } from '@wdb/server/src/auth.ts';
 import type { AnyEvent } from '@wdb/shared';
-import { deviceSigHeader, entryHash, newDeviceKey, rawPublicKey, signEvent } from '../src/sync/crypto.ts';
+import { deviceSigHeader, entryHash, newDeviceKey, rawPublicKey, sealWdbx, signEvent } from '../src/sync/crypto.ts';
 import { backoffMs, parseSse } from '../src/sync/engine.ts';
 
 const unsigned = (label: string, deviceSeq: number): Omit<AnyEvent, 'sig'> => ({
@@ -81,5 +82,22 @@ describe('backoffMs', () => {
     expect(backoffMs(3, () => 1)).toBe(8000);
     expect(backoffMs(20, () => 1)).toBe(60_000);
     expect(backoffMs(5, () => 0)).toBe(0);
+  });
+});
+
+describe('.wdbx container (SEC-15)', () => {
+  it('decrypts with plain Node crypto, as the server-side decrypt tool will', async () => {
+    const passphrase = 'correct horse battery';
+    const box = JSON.parse(await sealWdbx({ 'unsynced.json': '{"events":[]}' }, passphrase));
+    expect(box).toMatchObject({ wdbx: 1, kdf: 'PBKDF2-SHA256', iterations: 600000, alg: 'AES-256-GCM' });
+    const key = pbkdf2Sync(passphrase, Buffer.from(box.salt, 'base64url'), box.iterations, 32, 'sha256');
+    const data = Buffer.from(box.ciphertext, 'base64url');
+    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64url'));
+    d.setAuthTag(data.subarray(-16));
+    expect(JSON.parse(Buffer.concat([d.update(data.subarray(0, -16)), d.final()]).toString())).toEqual({ 'unsynced.json': '{"events":[]}' });
+  });
+
+  it('refuses a short passphrase', async () => {
+    await expect(sealWdbx({}, 'short')).rejects.toThrow(/12 characters/);
   });
 });

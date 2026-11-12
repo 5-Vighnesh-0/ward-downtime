@@ -26,7 +26,7 @@ docs/             adr/, runbooks/
 ```
 
 ## Commands
-`pnpm install` · `docker compose up -d db-test` (needed by `pnpm test`) · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm --filter @wdb/server migrate` · `pnpm --filter @wdb/server verify-chain` · `pnpm --filter @wdb/server admin add-staff|approve-device` · `pnpm --filter @wdb/server start` · `pnpm e2e` · `docker compose up`
+`pnpm install` · `docker compose up -d db-test` (needed by `pnpm test`) · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm --filter @wdb/server migrate` · `pnpm --filter @wdb/server verify-chain` · `pnpm --filter @wdb/server admin add-staff|approve-device` · `pnpm --filter @wdb/server start` · `pnpm --filter @wdb/web dev|build` · `pnpm e2e` · `docker compose up`
 
 ## Working style
 - Tests first for the reducer and sync logic. Convergence must be proven with property-based tests.

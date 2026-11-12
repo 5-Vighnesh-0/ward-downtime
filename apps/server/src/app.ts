@@ -4,10 +4,10 @@ import { EventEmitter } from 'node:events';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Role } from '@wdb/shared';
-import { AdminError, approveDevice, revokeDevice } from './admin.ts';
+import { addStaffMember, AdminError, approveDevice, revokeDevice, updateStaffMember } from './admin.ts';
 import { appendBatch } from './append.ts';
 import { checkPin, fingerprint, newToken, parseDeviceSig, tokenHash, verifyDeviceSig } from './auth.ts';
 import { auditLog, devices, logHead, sessions, staff } from './db/schema.ts';
@@ -54,6 +54,19 @@ const Enroll = z.strictObject({
 });
 const SignIn = z.strictObject({ staffId: z.string().regex(/^S-[0-9]{4}$/), pin: z.string().regex(/^[0-9]{6,8}$/) });
 const IdParam = z.strictObject({ id: z.uuid() });
+const staffId = z.string().regex(/^S-[0-9]{4}$/);
+const role = z.enum(['clerk', 'nurse', 'charge', 'admin']);
+const pin = z.string().regex(/^[0-9]{6,8}$/);
+const displayName = z.string().min(1).max(40).regex(printable);
+const NewStaff = z.strictObject({ staffId, displayName, role, pin });
+const StaffPatch = z.strictObject({ role: role.optional(), status: z.enum(['active', 'disabled']).optional(), displayName: displayName.optional(), pin: pin.optional() });
+const AuditQuery = z.strictObject({
+  before: z.coerce.number().pipe(z.int().min(1)).optional(),
+  limit: z.coerce.number().pipe(z.int().min(1).max(500)).default(100),
+  staffId: staffId.optional(),
+  deviceId: z.uuid().optional(),
+  action: z.string().regex(/^[A-Z_]{1,32}$/).optional(),
+});
 
 const error = (code: string, message: string, details?: unknown) => ({ error: { code, message, ...(details ? { details } : {}) } });
 
@@ -233,7 +246,9 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         const q = PullQuery.safeParse(req.query);
         if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
         const [head] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
-        return { headSeq: head?.lastSeq ?? 0, entries: await readEntries(db, q.data.after, q.data.limit) };
+        // disabledStaff: devices drop these staff members' offline sign-in (design.md §9.2.3).
+        const disabled = await db.select({ id: staff.staffId }).from(staff).where(eq(staff.status, 'disabled')).orderBy(staff.staffId);
+        return { headSeq: head?.lastSeq ?? 0, entries: await readEntries(db, q.data.after, q.data.limit), disabledStaff: disabled.map((r) => r.id) };
       },
     );
 
@@ -283,6 +298,64 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       streams.close(p.data.id);
       await audit(req, { staffId: req.auth?.staffId ?? null, deviceId: p.data.id, action: 'DEVICE_REVOKE', outcome: 'ok' });
       return { status: 'revoked' };
+    });
+
+    api.get('/api/v1/admin/staff', { onRequest: admin }, async () => ({
+      staff: await db
+        .select({ staffId: staff.staffId, displayName: staff.displayName, role: staff.role, status: staff.status, lockedUntil: staff.lockedUntil })
+        .from(staff)
+        .orderBy(staff.staffId),
+    }));
+
+    api.post('/api/v1/admin/staff', { onRequest: admin }, async (req, reply) => {
+      const b = NewStaff.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid staff member', z.flattenError(b.error)));
+      try {
+        await addStaffMember(db, b.data);
+      } catch (e) {
+        if ((e as { cause?: { code?: string } }).cause?.code === '23505') return deny(reply, 409, 'STAFF_EXISTS', 'Staff ID already in use');
+        throw e;
+      }
+      // shortcut: audit_log has no target column, so `code` holds the target staff ID; add one with the next approved schema change.
+      await audit(req, { staffId: req.auth?.staffId ?? null, deviceId: req.auth?.deviceId ?? null, action: 'STAFF_CREATE', outcome: 'ok', code: b.data.staffId });
+      return reply.code(201).send({ staffId: b.data.staffId, displayName: b.data.displayName, role: b.data.role, status: 'active' });
+    });
+
+    api.patch('/api/v1/admin/staff/:id', { onRequest: admin }, async (req, reply) => {
+      const id = staffId.safeParse((req.params as { id?: string }).id);
+      const b = StaffPatch.safeParse(req.body);
+      if (!id.success) return deny(reply, 404, 'NOT_FOUND', 'Staff member not found');
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid update', z.flattenError(b.error)));
+      try {
+        const row = await updateStaffMember(db, id.data, Object.fromEntries(Object.entries(b.data).filter(([, v]) => v !== undefined)));
+        await audit(req, { staffId: req.auth?.staffId ?? null, deviceId: req.auth?.deviceId ?? null, action: 'STAFF_UPDATE', outcome: 'ok', code: id.data });
+        return row;
+      } catch (e) {
+        if (e instanceof AdminError) return deny(reply, 404, e.code, e.message);
+        throw e;
+      }
+    });
+
+    // --- Audit view (FR-14, SEC-18): newest first, paged with `before` ---
+    api.get('/api/v1/audit', { onRequest: requireSession(['charge', 'admin']) }, async (req, reply) => {
+      const q = AuditQuery.safeParse(req.query);
+      if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
+      const { before, limit, staffId: s, deviceId: dv, action } = q.data;
+      const rows = await db
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            before ? lt(auditLog.auditId, before) : undefined,
+            s ? eq(auditLog.staffId, s) : undefined,
+            dv ? eq(auditLog.deviceId, dv) : undefined,
+            action ? eq(auditLog.action, action) : undefined,
+          ),
+        )
+        .orderBy(desc(auditLog.auditId))
+        .limit(limit + 1);
+      const entries = rows.slice(0, limit).map((r) => ({ ...r, serverTime: r.serverTime.toISOString() }));
+      return { entries, next: rows.length > limit ? (entries.at(-1)?.auditId ?? null) : null };
     });
   });
 

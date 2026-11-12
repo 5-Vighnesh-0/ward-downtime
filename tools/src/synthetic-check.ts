@@ -47,7 +47,8 @@ function repoFiles(): string[] {
   const out = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
     encoding: 'utf8',
   });
-  return out.split('\0').filter(Boolean);
+  // pnpm-lock.yaml holds only third-party package metadata (it quotes maintainers' emails), never our data.
+  return out.split('\0').filter((f) => f && f !== 'pnpm-lock.yaml');
 }
 
 function main(): void {

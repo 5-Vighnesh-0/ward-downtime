@@ -23,7 +23,8 @@ export function createStreams(db: Db, bus: EventEmitter, opts: StreamOptions) {
       connection: 'keep-alive',
       'x-request-id': req.id,
     });
-    res.flushHeaders(); // otherwise the client sees no open stream until the first event
+    // A first comment, so the client (and any proxy that waits for body bytes) sees the stream open at once.
+    res.write(': open\n\n');
 
     let closed = false;
     let queue = Promise.resolve();

@@ -9,4 +9,10 @@ trustPolicy: no-downgrade
 trustPolicyExclude:
   # Checked 2026-11-11: published 2024-11-13 by the same maintainer as every other release, none carry provenance. Not a takeover.
   - undici-types@6.21.0
+  # Checked 2026-11-12: Workbox 7.4.1 (workbox-build) depends on this fork on purpose (GoogleChrome/workbox commit 7c0dd544).
+  # 2.4.3 had provenance, this prerelease has none. Approved by the project owner; recheck when Workbox updates it.
+  - '@trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1'
+  # Checked 2026-11-12 (owner delegated the call): 2023 backport of the ReDoS fix, published by the same npm CLI
+  # maintainer who publishes 7.x; the 6.x line never had provenance. Pulled in by Babel via workbox-build.
+  - semver@6.3.1
 blockExoticSubdeps: true

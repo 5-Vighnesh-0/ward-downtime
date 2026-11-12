@@ -10,6 +10,11 @@ export function toBase64url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+export function fromBase64url(s: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
 const toHex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 const fromHex = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (h) => parseInt(h, 16));
 
@@ -40,4 +45,16 @@ export async function entryHash(prevHash: string, e: Pick<LedgerEntry, 'serverSe
   buf.set(prev);
   buf.set(body, prev.length);
   return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)));
+}
+
+/** The `.wdbx` container (design.md §7.3): PBKDF2-SHA256 → AES-256-GCM over a JSON object of named files. */
+export async function sealWdbx(files: Record<string, string>, passphrase: string): Promise<string> {
+  if (passphrase.length < 12) throw new Error('passphrase must be at least 12 characters');
+  const iterations = 600_000;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const base = await crypto.subtle.importKey('raw', utf8.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, utf8.encode(JSON.stringify(files))));
+  return JSON.stringify({ wdbx: 1, kdf: 'PBKDF2-SHA256', iterations, salt: toBase64url(salt), iv: toBase64url(iv), alg: 'AES-256-GCM', ciphertext: toBase64url(ciphertext) });
 }

@@ -26,6 +26,9 @@ const SNAPSHOT_EVERY = 500;
 const POLL_MS = 15_000;
 const SSE_RETRY_AFTER_POLLING_MS = 5 * 60_000;
 
+/** The ward server answered. A bare 5xx with none of our error codes comes from a proxy in front of a server that is down. */
+const reachable = (e: unknown) => e instanceof ApiError && !e.code.startsWith('HTTP_');
+
 /** Full-jitter exponential backoff (§5.6): random(0, min(60 s, 1 s × 2^attempt)). */
 export const backoffMs = (attempt: number, random: () => number) => random() * Math.min(60_000, 1000 * 2 ** attempt);
 
@@ -63,7 +66,7 @@ export class SyncEngine {
   #state: EngineState;
   #listeners = new Set<(s: EngineState) => void>();
   #pushing: Promise<void> | null = null;
-  #pushAgain = false;
+  #pushAgain: Promise<void> | null = null;
   #attempt = 0;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #applying: Promise<unknown> = Promise.resolve();
@@ -95,6 +98,30 @@ export class SyncEngine {
     return this.#state;
   }
 
+  get device(): { deviceId: string; label: string; tempPrefix: string; nextPatientId: string } {
+    const m = this.#meta;
+    return { deviceId: m.deviceId, label: m.label, tempPrefix: m.tempPrefix, nextPatientId: `T-${m.tempPrefix}-${String(m.tempCounter + 1).padStart(4, '0')}` };
+  }
+
+  get session(): Session | null {
+    return this.#session;
+  }
+
+  /** The newest confirmed events this tablet made (for My changes). */
+  async myConfirmed(limit: number): Promise<AnyEvent[]> {
+    const id = this.#meta.deviceId;
+    const rows = await this.#db.events.orderBy('serverSeq').reverse().filter((e) => e.event.deviceId === id).limit(limit).toArray();
+    return rows.map((r) => r.event);
+  }
+
+  /** Ends the server session if reachable; the outbox stays and sends at the next sign-in. */
+  async signOut(): Promise<void> {
+    this.#session = null;
+    await this.#db.session.delete('current');
+    await request(this.#net, 'DELETE', '/api/v1/sessions/current').catch(() => undefined);
+    this.#publish();
+  }
+
   subscribe(fn: (s: EngineState) => void): () => void {
     this.#listeners.add(fn);
     return () => this.#listeners.delete(fn);
@@ -112,7 +139,7 @@ export class SyncEngine {
   /** Called after an online sign-in stored the session. */
   async resume(): Promise<void> {
     this.#session = (await this.#db.session.get('current')) ?? null;
-    if (this.#state.alert === 'SIGNED_OUT') this.#set({ alert: null });
+    this.#set(this.#state.alert === 'SIGNED_OUT' ? { alert: null } : {});
     void this.push();
   }
 
@@ -162,17 +189,9 @@ export class SyncEngine {
 
   /** Sends queued events in deviceSeq order, one batch at a time. Safe to call any time. */
   push(): Promise<void> {
-    if (this.#pushing) {
-      this.#pushAgain = true;
-      return this.#pushing;
-    }
-    this.#pushing = this.#pushLoop().finally(() => {
-      this.#pushing = null;
-      if (this.#pushAgain) {
-        this.#pushAgain = false;
-        void this.push();
-      }
-    });
+    // While a push runs, callers get one follow-up push that starts after it, so what they queued is covered.
+    if (this.#pushing) return (this.#pushAgain ??= this.#pushing.then(() => ((this.#pushAgain = null), this.push())));
+    this.#pushing = this.#pushLoop().finally(() => (this.#pushing = null));
     return this.#pushing;
   }
 
@@ -223,7 +242,7 @@ export class SyncEngine {
       this.#set({ alert: 'SIGNED_OUT' });
       return;
     }
-    this.#set({ online: e instanceof ApiError }); // an HTTP error means the server is reachable
+    this.#set({ online: reachable(e) });
     clearTimeout(this.#retryTimer);
     const delay = e instanceof ApiError && e.retryAfterMs !== null ? e.retryAfterMs : backoffMs(this.#attempt++, this.#random);
     if (!this.#abort.signal.aborted) this.#retryTimer = setTimeout(() => void this.push(), delay);
@@ -246,15 +265,19 @@ export class SyncEngine {
   async pull(): Promise<void> {
     if (!this.#session || this.#state.alert === 'CHAIN_FORK') return;
     for (;;) {
-      let page: { entries: LedgerEntry[] };
+      let page: { entries: LedgerEntry[]; disabledStaff?: string[] };
       try {
         page = await (await request(this.#net, 'GET', `/api/v1/events?after=${this.#meta.lastServerSeq}&limit=${PAGE}`)).json();
       } catch (e) {
         if (e instanceof ApiError && (e.code === 'DEVICE_REVOKED' || e.code === 'NO_SESSION')) await this.#onFailure(e);
-        else this.#set({ online: e instanceof ApiError });
+        else this.#set({ online: reachable(e) });
         return;
       }
+      const wasOffline = !this.#state.online;
       this.#set({ online: true });
+      if (wasOffline) void this.push(); // back in contact: send what queued up, without waiting for the backoff timer
+      // §9.2.3: staff disabled on the server lose offline sign-in on this device.
+      if (page.disabledStaff?.length) await this.#db.creds.bulkDelete(page.disabledStaff);
       const result = await this.apply(page.entries);
       if (result !== 'ok' || page.entries.length < PAGE) return;
     }
@@ -329,7 +352,9 @@ export class SyncEngine {
         if (res.status === 401 || res.status === 403) {
           const code = ((await res.json().catch(() => null)) as { error?: { code?: string } } | null)?.error?.code ?? '';
           await this.#onFailure(new ApiError(res.status, code));
-        } else if (res.ok && res.body) {
+        } else if (!res.ok) {
+          this.#set({ online: false });
+        } else if (res.body) {
           this.#set({ online: true });
           void this.push(); // §5.6: push immediately when the stream opens
           await this.#read(res.body);

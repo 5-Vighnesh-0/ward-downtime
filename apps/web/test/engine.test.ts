@@ -62,6 +62,21 @@ describe('local write path and push (§5.1, §5.3)', () => {
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
   });
 
+  it('a 502 from a proxy in front of a stopped server counts as offline', async () => {
+    await setup();
+    const t = await another();
+    await t.engine.pull();
+    expect(t.engine.state.online).toBe(true);
+    t.net.proxyDown = true;
+    await t.engine.admit({ label: 'Rowan Ashby', bedId: 'B01' });
+    await t.engine.push();
+    expect(t.engine.state.online).toBe(false);
+    expect(t.engine.state.unsynced).toBe(1);
+    t.net.proxyDown = false;
+    await t.engine.pull(); // a poll that gets through sends the queue at once
+    await eventually(() => t.engine.state.unsynced === 0);
+  });
+
   it('a lost reply and three retries still give one log entry (FR-4, acceptance 3)', async () => {
     await setup();
     const t = await another();
@@ -206,6 +221,17 @@ describe('session and device lifecycle (SEC-8, SEC-14)', () => {
     expect(t.engine.state.alert).toBe('DEVICE_REVOKED');
     expect(await Dexie.exists(t.db.name)).toBe(false);
     await expect(t.engine.admit({ label: 'Mira Holt', bedId: 'B03' })).rejects.toThrow();
+  });
+
+  it('drops offline sign-in for staff disabled on the server (§9.2.3)', async () => {
+    const admin = await setup();
+    const t = await another();
+    const gone = (await admin.db.session.get('current'))?.staffId ?? '';
+    const kept = (await t.db.session.get('current'))?.staffId ?? '';
+    await t.db.creds.bulkPut([gone, kept].map((staffId) => ({ staffId, role: 'nurse' as const, exp: '2099-01-01T00:00:00.000Z', salt: '', hash: '', iterations: 1, failCount: 0 })));
+    await ward.owner.pool.query('UPDATE staff SET status = $2 WHERE staff_id = $1', [gone, 'disabled']);
+    await t.engine.pull();
+    expect((await t.db.creds.toArray()).map((c) => c.staffId)).toEqual([kept]);
   });
 
   it('an ended session keeps the outbox and asks for sign-in', async () => {
