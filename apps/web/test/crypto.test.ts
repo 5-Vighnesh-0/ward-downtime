@@ -6,7 +6,8 @@ import { entryHash as serverEntryHash, GENESIS_HASH } from '@wdb/server/src/chai
 import { publicKeyFromRaw, verifySignature } from '@wdb/server/src/signature.ts';
 import { parseDeviceSig, verifyDeviceSig } from '@wdb/server/src/auth.ts';
 import type { AnyEvent } from '@wdb/shared';
-import { deviceSigHeader, entryHash, newDeviceKey, rawPublicKey, sealWdbx, signEvent } from '../src/sync/crypto.ts';
+import { openWdbx as serverOpen, sealWdbx as serverSeal } from '@wdb/server/src/wdbx.ts';
+import { deviceSigHeader, entryHash, newDeviceKey, openWdbx, rawPublicKey, sealWdbx, signEvent } from '../src/sync/crypto.ts';
 import { backoffMs, parseSse } from '../src/sync/engine.ts';
 
 const unsigned = (label: string, deviceSeq: number): Omit<AnyEvent, 'sig'> => ({
@@ -95,6 +96,15 @@ describe('.wdbx container (SEC-15)', () => {
     const d = createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64url'), { authTagLength: 16 });
     d.setAuthTag(data.subarray(-16));
     expect(JSON.parse(Buffer.concat([d.update(data.subarray(0, -16)), d.final()]).toString())).toEqual({ 'unsynced.json': '{"events":[]}' });
+  });
+
+  it('the device and the server open each other\'s files, and reject a wrong passphrase', async () => {
+    const pass = 'correct horse battery';
+    const files = { 'unsynced.json': '{"events":[1]}' };
+    expect(serverOpen(await sealWdbx(files, pass), pass)).toEqual(files);
+    expect(await openWdbx(serverSeal(files, pass), pass)).toEqual(files);
+    await expect(openWdbx(serverSeal(files, pass), 'wrong passphrase!')).rejects.toThrow(/Wrong passphrase/);
+    expect(await openWdbx(JSON.stringify({ wdbx: 1, alg: 'none', files }), '')).toEqual(files);
   });
 
   it('refuses a short passphrase', async () => {

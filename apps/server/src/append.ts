@@ -32,10 +32,11 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest();
 
 const AUDIT = { appended: ['EVENT_APPEND', 'ok'], duplicate: ['EVENT_DUPLICATE', 'duplicate'], refused: ['EVENT_REFUSED', 'refused'] } as const;
 
-export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx = { requestId: 'internal' }): Promise<BatchOutcome> {
+/** `importing`: an admin imports a saved device file (§8.4), so a revoked device's key still verifies its own events. */
+export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx: { requestId: string; importing?: boolean } = { requestId: 'internal' }): Promise<BatchOutcome> {
   return db.transaction(async (tx) => {
     const [device] = await tx.select().from(devices).where(eq(devices.deviceId, deviceId)).for('update');
-    if (!device || device.status !== 'active') {
+    if (!device || (device.status !== 'active' && !(ctx.importing && device.status === 'revoked'))) {
       const code = device?.status === 'revoked' ? 'DEVICE_REVOKED' : 'DEVICE_NOT_ACTIVE';
       await tx.insert(auditLog).values({ deviceId: device ? deviceId : null, action: 'PUSH_DENIED', outcome: 'denied', code, requestId: ctx.requestId });
       return { ok: false, status: 403, code };

@@ -58,3 +58,31 @@ export async function sealWdbx(files: Record<string, string>, passphrase: string
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, utf8.encode(JSON.stringify(files))));
   return JSON.stringify({ wdbx: 1, kdf: 'PBKDF2-SHA256', iterations, salt: toBase64url(salt), iv: toBase64url(iv), alg: 'AES-256-GCM', ciphertext: toBase64url(ciphertext) });
 }
+
+/** Opens a `.wdbx` (encrypted, or the admin's unencrypted kind). A wrong passphrase or an edited file throws. */
+export async function openWdbx(text: string, passphrase: string): Promise<Record<string, string>> {
+  const box = JSON.parse(text) as { wdbx?: number; alg?: string; files?: Record<string, string>; kdf?: string; iterations?: number; salt?: string; iv?: string; ciphertext?: string };
+  if (box.wdbx !== 1) throw new Error('This is not a ward board file.');
+  if (box.alg === 'none' && box.files) return box.files;
+  const iterations = box.iterations ?? 0;
+  if (box.alg !== 'AES-256-GCM' || box.kdf !== 'PBKDF2-SHA256' || !box.salt || !box.iv || !box.ciphertext || iterations < 100_000 || iterations > 10_000_000) {
+    throw new Error('This file uses a format this app cannot open.');
+  }
+  const base = await crypto.subtle.importKey('raw', utf8.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: fromBase64url(box.salt), iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64url(box.iv) }, key, fromBase64url(box.ciphertext));
+    return JSON.parse(new TextDecoder().decode(plain)) as Record<string, string>;
+  } catch {
+    throw new Error('Wrong passphrase, or the file was changed.');
+  }
+}
+
+/** Saves text as a file with a Blob URL: no network (on iOS this opens the share sheet). */
+export function downloadText(filename: string, text: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}

@@ -3,6 +3,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   bigserial,
   check,
   customType,
@@ -111,4 +112,17 @@ export const auditLog = pgTable('audit_log', {
   outcome: text('outcome').notNull(),
   code: text('code'),
   requestId: text('request_id').notNull(),
+});
+
+// One row per recovery export (design.md §4.4, §7.3; approved 2026-11-12). Never the file's content.
+export const exports = pgTable('exports', {
+  exportId: uuid('export_id').primaryKey(),
+  createdBy: text('created_by')
+    .notNull()
+    .references(() => staff.staffId),
+  createdAt: tstz('created_at').notNull().defaultNow(),
+  upToSeq: bigint('up_to_seq', { mode: 'number' }).notNull(),
+  formats: text('formats').array().notNull(),
+  encrypted: boolean('encrypted').notNull(),
+  sha256: bytea('sha256').notNull(),
 });

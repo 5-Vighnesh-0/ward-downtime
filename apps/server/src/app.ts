@@ -13,6 +13,7 @@ import { checkPin, fingerprint, newToken, parseDeviceSig, tokenHash, verifyDevic
 import { auditLog, devices, logHead, sessions, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
 import { readEntries } from './entries.ts';
+import { createAuditExport, createRecoveryExport, type ExportFile } from './recovery.ts';
 import { publicKeyFromRaw } from './signature.ts';
 import { createStreams } from './stream.ts';
 
@@ -21,6 +22,7 @@ export interface AppOptions {
   maxInflightPushes?: number;
   streamBacklog?: number;
   streamPingMs?: number;
+  ward?: string | null; // shown in recovery exports (WDB_WARD_NAME)
 }
 
 interface Auth {
@@ -60,6 +62,9 @@ const pin = z.string().regex(/^[0-9]{6,8}$/);
 const displayName = z.string().min(1).max(40).regex(printable);
 const NewStaff = z.strictObject({ staffId, displayName, role, pin });
 const StaffPatch = z.strictObject({ role: role.optional(), status: z.enum(['active', 'disabled']).optional(), displayName: displayName.optional(), pin: pin.optional() });
+const passphrase = z.string().min(12).max(256);
+const ExportBody = z.union([z.strictObject({ passphrase }), z.strictObject({ plaintext: z.literal(true) })]);
+const Import = z.strictObject({ deviceId: z.uuid(), events: z.array(z.unknown()).min(1).max(100) });
 const AuditQuery = z.strictObject({
   before: z.coerce.number().pipe(z.int().min(1)).optional(),
   limit: z.coerce.number().pipe(z.int().min(1).max(500)).default(100),
@@ -334,6 +339,43 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         if (e instanceof AdminError) return deny(reply, 404, e.code, e.message);
         throw e;
       }
+    });
+
+    // --- Recovery export (FR-11, SEC-15) and audit export (FR-14). The passphrase is never stored or logged. ---
+    const download = (reply: FastifyReply, f: ExportFile) =>
+      reply.header('content-type', 'application/octet-stream').header('content-disposition', `attachment; filename="${f.filename}"`).header('cache-control', 'no-store').send(f.body);
+    const exportLimit = { rateLimit: { max: 6, timeWindow: '1 minute', keyGenerator: byDevice, hook: 'preHandler' as const } };
+
+    api.post('/api/v1/exports', { onRequest: requireSession(['charge', 'admin']), config: exportLimit }, async (req, reply) => {
+      const b = ExportBody.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'A passphrase of at least 12 characters is required', z.flattenError(b.error)));
+      const auth = req.auth as Auth;
+      const plaintext = 'plaintext' in b.data;
+      if (plaintext && auth.role !== 'admin') return deny(reply, 403, 'ROLE_FORBIDDEN', 'Only an admin can create unencrypted files');
+      const f = await createRecoveryExport(db, { staffId: auth.staffId, passphrase: 'passphrase' in b.data ? b.data.passphrase : null, ward: opts.ward ?? null });
+      await audit(req, { staffId: auth.staffId, deviceId: auth.deviceId, action: plaintext ? 'EXPORT_PLAINTEXT' : 'EXPORT_CREATE', outcome: 'ok', code: f.sha256 });
+      return download(reply, f);
+    });
+
+    api.post('/api/v1/audit/export', { onRequest: requireSession(['charge', 'admin']), config: exportLimit }, async (req, reply) => {
+      const b = z.strictObject({ passphrase }).safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'A passphrase of at least 12 characters is required', z.flattenError(b.error)));
+      const auth = req.auth as Auth;
+      const f = await createAuditExport(db, b.data.passphrase);
+      await audit(req, { staffId: auth.staffId, deviceId: auth.deviceId, action: 'AUDIT_EXPORT', outcome: 'ok', code: f.sha256 });
+      return download(reply, f);
+    });
+
+    // --- Queue import (§8.4): a saved device file, verified with that device's own key, appended by the normal rules ---
+    api.post('/api/v1/recovery/queue-import', { onRequest: admin }, async (req, reply) => {
+      const b = Import.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid import', z.flattenError(b.error)));
+      const auth = req.auth as Auth;
+      const out = await appendBatch(db, b.data.deviceId, b.data.events, { requestId: req.id, importing: true });
+      await audit(req, { staffId: auth.staffId, deviceId: b.data.deviceId, action: 'QUEUE_IMPORT', outcome: out.ok ? 'ok' : 'denied', code: out.ok ? null : out.code });
+      if (!out.ok) return deny(reply, out.status, out.code, 'Device not found or not yet approved');
+      if (out.results.some((r) => r.status === 'appended')) bus.emit('appended');
+      return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
     });
 
     // --- Audit view (FR-14, SEC-18): newest first, paged with `before` ---

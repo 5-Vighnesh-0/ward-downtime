@@ -6,6 +6,7 @@ import { AdminScreen, AuditScreen } from './screens/Admin.tsx';
 import { EnrollScreen, LockScreen, SignInScreen } from './screens/Access.tsx';
 import { BoardScreen } from './screens/Board.tsx';
 import { ConflictsScreen, UnplacedScreen } from './screens/Conflicts.tsx';
+import { RecoveryScreen } from './screens/Recovery.tsx';
 import { MyChangesScreen } from './screens/MyChanges.tsx';
 import { openDb } from './sync/db.ts';
 import { browserNet } from './sync/device.ts';
@@ -62,7 +63,7 @@ export function App() {
   );
 }
 
-type Tab = 'board' | 'conflicts' | 'unplaced' | 'changes' | 'audit' | 'admin';
+type Tab = 'board' | 'conflicts' | 'unplaced' | 'changes' | 'recovery' | 'audit' | 'admin';
 
 function Ready({ engine }: { engine: SyncEngine }) {
   const s = useEngine(engine);
@@ -165,7 +166,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
     ...(canResolve ? ([['conflicts', `Conflicts (${openConflicts})`]] as [Tab, string][]) : []),
     ['unplaced', 'Unplaced'],
     ['changes', 'My changes'],
-    ...(session.role === 'charge' || session.role === 'admin' ? ([['audit', 'Audit']] as [Tab, string][]) : []),
+    ...(canResolve ? ([['recovery', 'Recovery'], ['audit', 'Audit']] as [Tab, string][]) : []),
     ...(session.role === 'admin' ? ([['admin', 'Admin']] as [Tab, string][]) : []),
   ];
   return (
@@ -224,6 +225,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
       {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
       {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
       {tab === 'changes' && <MyChangesScreen engine={engine} />}
+      {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} />}
       {tab === 'audit' && <AuditScreen net={net} />}
       {tab === 'admin' && <AdminScreen engine={engine} net={net} />}
       <LiveRegion message={announce} />

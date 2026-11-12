@@ -1,8 +1,6 @@
 // prd.md §7 acceptance 1 (E2E-01, both reconnect orders) and 5 (E2E-05), design.md §12.8; FR-5 to FR-8.
-import { expect, test, type Page } from '@playwright/test';
-import { readEntries } from '@wdb/server/src/entries.ts';
-import { replay } from '@wdb/shared';
-import { admit, boardOf, configureBeds, owner, resetDb, setUpTablet, startApi, stopApi } from './support.ts';
+import { expect, test } from '@playwright/test';
+import { admit, boardOf, owner, reconnect, resetDb, serverBoard, startApi, stopApi, tab, twoTablets } from './support.ts';
 
 test.beforeEach(async () => {
   await stopApi();
@@ -10,26 +8,6 @@ test.beforeEach(async () => {
   await startApi();
 });
 test.afterAll(stopApi);
-
-/** Back online, and the browser's `online` event makes the tablet send at once. */
-async function reconnect(page: Page): Promise<void> {
-  await page.context().setOffline(false);
-  await page.evaluate(() => dispatchEvent(new Event('online')));
-  await expect(page.getByText('Unsynced: 0', { exact: true })).toBeVisible({ timeout: 20_000 });
-}
-
-const serverBoard = async () => replay(await readEntries(owner.db, 0, 1000));
-
-/** A charge-capable tablet (admin) and a nurse tablet, both seeing 4 empty beds. */
-async function twoTablets(browser: import('@playwright/test').Browser) {
-  const a = await (await browser.newContext()).newPage();
-  const b = await (await browser.newContext()).newPage();
-  await setUpTablet(a, 'admin', 'Tablet A');
-  await configureBeds(a, 4);
-  await setUpTablet(b, 'nurse', 'Tablet B');
-  await expect(b.getByRole('button', { name: 'Bed 4, empty' })).toBeVisible();
-  return { a, b };
-}
 
 for (const order of ['A first', 'B first'] as const) {
   test(`E2E-01 (${order}): two offline admits to bed 4 become one conflict; the charge nurse keeps one (acceptance 1)`, async ({ browser }) => {
@@ -67,8 +45,7 @@ for (const order of ['A first', 'B first'] as const) {
     await expect(b.getByText(/^Not kept/)).toBeVisible();
 
     // E13: the unplaced patient goes to another bed under the same temp ID.
-    await b.waitForTimeout(700); // the 600 ms double-tap guard ignores a second tap on the same tab sooner
-    await b.getByRole('button', { name: 'Unplaced', exact: true }).click();
+    await tab(b, 'Unplaced');
     await b.getByRole('button', { name: 'Admit Rowan Ashby to a bed' }).click();
     await b.getByRole('button', { name: 'Admit Rowan Ashby to Bed 2' }).click();
     await expect(b.getByText(/^Everyone has a bed\./)).toBeVisible();

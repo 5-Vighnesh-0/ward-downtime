@@ -1,7 +1,9 @@
 // E2E helpers: database reset, the ward server as a child process, and tablets set up through the real screens.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { expect, type Page } from '@playwright/test';
+import { expect, type Browser, type Page } from '@playwright/test';
+import { readEntries } from '@wdb/server/src/entries.ts';
+import { replay } from '@wdb/shared';
 import { addStaffMember, approveDevice } from '@wdb/server/src/admin.ts';
 import { createDb } from '@wdb/server/src/db.ts';
 import type { Role } from '@wdb/shared';
@@ -100,3 +102,34 @@ export const boardOf = (page: Page) => page.getByRole('list').first().getByRole(
 
 /** Waits until the service worker controls the page, so the app shell loads offline. */
 export const swReady = (page: Page) => page.evaluate(async () => !!(await navigator.serviceWorker.ready));
+
+/** Back online, and the browser's `online` event makes the tablet send at once. */
+export async function reconnect(page: Page): Promise<void> {
+  await page.context().setOffline(false);
+  await page.evaluate(() => dispatchEvent(new Event('online')));
+  await expect(page.getByText('Unsynced: 0', { exact: true })).toBeVisible({ timeout: 20_000 });
+}
+
+export const serverBoard = async () => replay(await readEntries(owner.db, 0, 1000));
+
+/** A charge-capable tablet (admin) and a nurse tablet, both seeing 4 empty beds. */
+export async function twoTablets(browser: Browser) {
+  const a = await (await browser.newContext()).newPage();
+  const b = await (await browser.newContext()).newPage();
+  await setUpTablet(a, 'admin', 'Tablet A');
+  await configureBeds(a, 4);
+  await setUpTablet(b, 'nurse', 'Tablet B');
+  await expect(b.getByRole('button', { name: 'Bed 4, empty' })).toBeVisible();
+  return { a, b };
+}
+
+
+/** Opens a screen from the tab bar. Retries, because the 600 ms double-tap guard ignores a second tap on the
+ *  same tab sooner, which only a test is fast enough to do. */
+export async function tab(page: Page, name: string): Promise<void> {
+  const button = page.getByRole('navigation', { name: 'Screens' }).getByRole('button', { name: new RegExp(`^${name}`) });
+  await expect(async () => {
+    await button.click();
+    await expect(button.locator('[aria-current="page"]')).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
+}

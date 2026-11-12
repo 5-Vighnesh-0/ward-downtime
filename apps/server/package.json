@@ -9,7 +9,8 @@
     "migrate": "node src/migrate.ts",
     "verify-chain": "node src/verify-chain.ts",
     "admin": "node src/admin-cli.ts",
-    "start": "node src/main.ts"
+    "start": "node src/main.ts",
+    "export:decrypt": "node src/export-cli.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",

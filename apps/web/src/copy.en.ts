@@ -25,6 +25,8 @@ export const copy = {
   blocked: 'Not shown on the board: the bed was taken before this was sent. It will appear as a conflict once sent.',
   notApplied: (reason: string) => `Not applied (${reason}).`,
   notKept: 'Not kept: a charge nurse chose another patient for this bed.',
+  openConflictsExport: (n: number) => `${n} ${n === 1 ? 'conflict is' : 'conflicts are'} still open. The export will list ${n === 1 ? 'it' : 'them'} as unresolved.`,
+  deviceExport: 'The ward server is not reachable, so this export was made from this tablet’s copy of the log. It may miss changes other tablets have not sent yet.',
   noConflicts: 'No conflicts. When two patients are placed in the same bed, they appear here for you to choose.',
   noUnplaced: 'Everyone has a bed. Patients not kept after a conflict appear here.',
   // §10.6: plain reasons for outcomes the author needs to act on; other codes show as-is.

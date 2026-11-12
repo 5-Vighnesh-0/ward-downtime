@@ -1,6 +1,6 @@
 // Device sync engine (design.md §5.1, §5.5, §5.6, §6.6, §9.6): local outbox, push, pull, SSE, optimistic view.
-import { EventSchema, emptyBoard, formatHlc, nextHlc, replay, type AnyEvent, type Board, type EventType } from '@wdb/shared';
-import { entryHash, signEvent } from './crypto.ts';
+import { buildRecoveryExport, EventSchema, emptyBoard, formatHlc, nextHlc, replay, type AnyEvent, type Board, type EventType } from '@wdb/shared';
+import { entryHash, sealWdbx, signEvent } from './crypto.ts';
 import { ApiError, request, type Net } from './device.ts';
 import type { LedgerEntry, Meta, OutboxItem, Session, WdbDb } from './db.ts';
 
@@ -134,6 +134,18 @@ export class SyncEngine {
     const { patientId } = payload;
     if (patientId) return this.#record('ADMIT', () => ({ ...payload, patientId }), false);
     return this.#record('ADMIT', (m) => ({ ...payload, patientId: `T-${m.tempPrefix}-${String(m.tempCounter).padStart(4, '0')}` }), true);
+  }
+
+  /** Recovery export from this tablet's own copy of the log, for when the ward server is down (§7.3). */
+  async localExport(passphrase: string): Promise<{ filename: string; body: string }> {
+    const entries = await this.#db.events.orderBy('serverSeq').toArray();
+    const { json, csv, upToSeq } = buildRecoveryExport(entries, {
+      generatedAt: new Date(this.#net.now()).toISOString(),
+      ward: null,
+      source: 'device',
+      deviceLabels: { [this.#meta.deviceId]: this.#meta.label },
+    });
+    return { filename: `recovery-${upToSeq}-tablet.wdbx`, body: await sealWdbx({ 'recovery.json': json, 'recovery.csv': csv }, passphrase) };
   }
 
   /** Confirmed events by eventId, for showing who placed each conflict candidate. */

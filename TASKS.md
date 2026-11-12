@@ -32,7 +32,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 
 ## M4: Conflicts and export
 - [x] Charge nurse conflict queue (FR-7), resolve and Unplaced (FR-8)
-- [ ] Recovery export JSON + CSV (FR-11), decrypt CLI, audit export, queue import (M4b)
+- [x] Recovery export JSON + CSV (FR-11), decrypt CLI, audit export, queue import (M4b)
 
 ## M5: Hardening
 - [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Done in M2b and M3b except the per-ward idle lock setting

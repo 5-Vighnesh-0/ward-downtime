@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { AnyEvent, Outcome } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
-import { sealWdbx } from '../sync/crypto.ts';
+import { downloadText, sealWdbx } from '../sync/crypto.ts';
 import type { OutboxItem } from '../sync/db.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { Button, Field, useEngine } from '../ui/kit.tsx';
@@ -44,11 +44,7 @@ async function saveToFile(engine: SyncEngine, passphrase: string): Promise<void>
   const { deviceId, label } = engine.device;
   const box = await sealWdbx({ 'unsynced.json': JSON.stringify({ deviceId, events }) }, passphrase);
   const range = events.length ? `${events[0]?.deviceSeq}-${events.at(-1)?.deviceSeq}` : 'empty';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([box], { type: 'application/json' }));
-  a.download = `unsynced-${label.replace(/[^A-Za-z0-9]+/g, '-')}-${range}.wdbx`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  downloadText(`unsynced-${label.replace(/[^A-Za-z0-9]+/g, '-')}-${range}.wdbx`, box);
 }
 
 export function SaveToFile({ engine }: { engine: SyncEngine }) {

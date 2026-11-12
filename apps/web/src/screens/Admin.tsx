@@ -5,6 +5,7 @@ import { copy } from '../copy.en.ts';
 import { ApiError, request, type Net } from '../sync/device.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { Banner, Button, Field, useEngine } from '../ui/kit.tsx';
+import { AuditExport } from './Recovery.tsx';
 
 const errText = (e: unknown) => (e instanceof ApiError ? `The ward server refused this (${e.code}).` : copy.needsServer);
 
@@ -276,6 +277,7 @@ export function AuditScreen({ net }: { net: Net }) {
           Filter
         </Button>
       </form>
+      <AuditExport net={net} />
       {error && <Banner tone="warn">{error}</Banner>}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-left">
