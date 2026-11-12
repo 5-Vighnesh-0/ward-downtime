@@ -12,7 +12,8 @@
     "test": "turbo run test",
     "check:synthetic": "node tools/src/synthetic-check.ts",
     "seed": "node tools/src/seed.ts",
-    "synthea:labels": "node tools/src/synthea-labels.ts"
+    "synthea:labels": "node tools/src/synthea-labels.ts",
+    "e2e": "pnpm --filter @wdb/web e2e"
   },
   "devDependencies": {
     "eslint": "10.13.0",

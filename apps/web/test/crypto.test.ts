@@ -92,7 +92,7 @@ describe('.wdbx container (SEC-15)', () => {
     expect(box).toMatchObject({ wdbx: 1, kdf: 'PBKDF2-SHA256', iterations: 600000, alg: 'AES-256-GCM' });
     const key = pbkdf2Sync(passphrase, Buffer.from(box.salt, 'base64url'), box.iterations, 32, 'sha256');
     const data = Buffer.from(box.ciphertext, 'base64url');
-    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64url'));
+    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'base64url'), { authTagLength: 16 });
     d.setAuthTag(data.subarray(-16));
     expect(JSON.parse(Buffer.concat([d.update(data.subarray(0, -16)), d.final()]).toString())).toEqual({ 'unsynced.json': '{"events":[]}' });
   });

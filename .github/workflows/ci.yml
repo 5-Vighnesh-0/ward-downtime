@@ -1,5 +1,4 @@
-# SEC-29. M0 runs only the jobs that have something to check; integration, e2e,
-# container-image scans and nightly seeds are added in M2/M3 (design.md §14).
+# SEC-29. Jobs that have something to check; container-image scans and nightly seeds come later (design.md §14).
 name: ci
 
 on:
@@ -40,6 +39,35 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm check:synthetic
+
+  # E2E-02/03/04/07/08, A11Y-03, PERF-01/05/06 on Chromium, Firefox and WebKit (design.md §12.3). PERF-03 (100k) runs by hand.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      db-test:
+        image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
+        env:
+          POSTGRES_USER: wdb_owner
+          POSTGRES_DB: wdb_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U wdb_owner"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @wdb/web exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm e2e
 
   deps:
     runs-on: ubuntu-latest

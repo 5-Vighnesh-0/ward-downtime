@@ -25,7 +25,7 @@ export function Button(p: {
   label?: string;
 }) {
   // A ref, not disabled state: disabling during the click would cancel a submit button's form submission.
-  const last = useRef(0);
+  const last = useRef(-Infinity); // event timestamps count from page load, so 0 would swallow the first 600 ms
   return (
     <button
       type={p.type ?? 'button'}

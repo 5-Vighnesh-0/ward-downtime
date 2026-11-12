@@ -26,8 +26,9 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Sync loop with backoff, pending/confirmed/conflict states (FR-10)
 - [x] Board UI, admit/discharge/transfer/rename (FR-1, FR-2)
 - [x] Persistent storage request, unsynced counter, file export fallback (FR-12). Server-side import of the file is M4
-- [ ] Service worker, install flow. SW and update prompt built (M3b); Home Screen install on a real iPad is checked in M3c
-- [ ] Playwright E2E on Chromium, Firefox, WebKit (M3c)
+- [x] Service worker and update prompt; offline reload from the SW cache tested in E2E-02 on all three browsers
+- [x] Playwright E2E on Chromium, Firefox, WebKit (M3c)
+- [ ] Real iPad: Home Screen install, storage behaviour (§8.2), PIN check speed, PERF on the reference tablet. Needs a device
 
 ## M4: Conflicts and export
 - [ ] Charge nurse conflict queue (FR-7)

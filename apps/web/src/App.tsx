@@ -89,6 +89,21 @@ function Ready({ engine }: { engine: SyncEngine }) {
     const updateSW = registerSW({ onNeedRefresh: () => setUpdate(() => () => updateSW(true)) });
   }, []);
 
+  // §5.6: push at once when the network or the app comes back, instead of waiting for backoff or polling.
+  useEffect(() => {
+    const kick = () => {
+      if (document.visibilityState === 'hidden') return;
+      void engine.pull();
+      void engine.push();
+    };
+    addEventListener('online', kick);
+    document.addEventListener('visibilitychange', kick);
+    return () => {
+      removeEventListener('online', kick);
+      document.removeEventListener('visibilitychange', kick);
+    };
+  }, [engine]);
+
   // SEC-14: a revoked tablet also drops its cached app shell.
   useEffect(() => {
     if (s.alert !== 'DEVICE_REVOKED') return;

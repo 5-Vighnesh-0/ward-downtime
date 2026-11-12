@@ -25,6 +25,7 @@ const MAX_BATCH_BYTES = 200 * 1024; // under the server's 256 KiB body limit
 const SNAPSHOT_EVERY = 500;
 const POLL_MS = 15_000;
 const SSE_RETRY_AFTER_POLLING_MS = 5 * 60_000;
+const STREAM_SILENCE_MS = 45_000; // over 2 server pings (20 s)
 
 /** The ward server answered. A bare 5xx with none of our error codes comes from a proxy in front of a server that is down. */
 const reachable = (e: unknown) => e instanceof ApiError && !e.code.startsWith('HTTP_');
@@ -382,19 +383,30 @@ export class SyncEngine {
     const reader = body.getReader();
     const text = new TextDecoder();
     let buffer = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      const { frames, rest } = parseSse(buffer + text.decode(value, { stream: true }));
-      buffer = rest;
-      for (const f of frames) {
-        if (f.event === 'resync') {
-          await this.pull();
-          return;
+    // The server pings every 20 s. Silence for longer means a dead connection (server gone behind a proxy,
+    // or a half-open Wi-Fi link) that would otherwise hang here forever; cancel it so connect() retries.
+    let heard = this.#net.now();
+    const watchdog = setInterval(() => {
+      if (this.#net.now() - heard > STREAM_SILENCE_MS) void reader.cancel();
+    }, 5000);
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        heard = this.#net.now();
+        const { frames, rest } = parseSse(buffer + text.decode(value, { stream: true }));
+        buffer = rest;
+        for (const f of frames) {
+          if (f.event === 'resync') {
+            await this.pull();
+            return;
+          }
+          if (f.event !== 'appended') continue;
+          if ((await this.apply([JSON.parse(f.data) as LedgerEntry])) === 'gap') await this.pull();
         }
-        if (f.event !== 'appended') continue;
-        if ((await this.apply([JSON.parse(f.data) as LedgerEntry])) === 'gap') await this.pull();
       }
+    } finally {
+      clearInterval(watchdog);
     }
   }
 
