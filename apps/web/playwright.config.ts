@@ -9,6 +9,7 @@ export const CHROMIUM_ARGS = ['--ignore-certificate-errors']; // test browser on
 export default defineConfig({
   testDir: 'e2e',
   workers: 1,
+  retries: process.env.CI ? 1 : 0, // a pass on retry is reported as flaky, with its trace kept for upload
   fullyParallel: false,
   timeout: 90_000,
   expect: { timeout: 10_000 },

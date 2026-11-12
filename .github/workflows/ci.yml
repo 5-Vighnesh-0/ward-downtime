@@ -68,6 +68,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @wdb/web exec playwright install --with-deps chromium firefox webkit
       - run: pnpm e2e
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-results
+          path: apps/web/test-results/
+          retention-days: 7
 
   deps:
     runs-on: ubuntu-latest

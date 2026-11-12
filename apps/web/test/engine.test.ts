@@ -74,7 +74,8 @@ describe('local write path and push (§5.1, §5.3)', () => {
     expect(t.engine.state.unsynced).toBe(1);
     t.net.proxyDown = false;
     await t.engine.pull(); // a poll that gets through sends the queue at once
-    await eventually(() => t.engine.state.unsynced === 0);
+    await t.engine.push(); // waits for that push and its follow-up pull, so nothing is in flight when the test ends
+    expect(t.engine.state.outbox).toEqual([]);
   });
 
   it('a lost reply and three retries still give one log entry (FR-4, acceptance 3)', async () => {
