@@ -27,6 +27,14 @@ export const copy = {
   notKept: 'Not kept: a charge nurse chose another patient for this bed.',
   openConflictsExport: (n: number) => `${n} ${n === 1 ? 'conflict is' : 'conflicts are'} still open. The export will list ${n === 1 ? 'it' : 'them'} as unresolved.`,
   deviceExport: 'The ward server is not reachable, so this export was made from this tablet’s copy of the log. It may miss changes other tablets have not sent yet.',
+  clockSkew: (ms: number) => `This tablet's clock is ${Math.round(Math.abs(ms) / 60_000) || '<1'} min off. Times shown may be wrong. The order of changes is not affected.`,
+  alerts: {
+    AUTH_FAILURES: 'Many failed sign-ins',
+    SIGNATURE_FAILURE: 'A change with a bad signature was refused',
+    EVENT_FLOOD: 'One tablet is sending an unusual number of changes',
+    CLOCK_SKEW: 'A tablet clock is wrong',
+    DEVICE_LAGGING: 'A tablet has not been in contact for over an hour',
+  } as Record<string, string>,
   noConflicts: 'No conflicts. When two patients are placed in the same bed, they appear here for you to choose.',
   noUnplaced: 'Everyone has a bed. Patients not kept after a conflict appear here.',
   // §10.6: plain reasons for outcomes the author needs to act on; other codes show as-is.

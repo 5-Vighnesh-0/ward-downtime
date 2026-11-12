@@ -9,7 +9,7 @@ import { ConflictsScreen, UnplacedScreen } from './screens/Conflicts.tsx';
 import { RecoveryScreen } from './screens/Recovery.tsx';
 import { MyChangesScreen } from './screens/MyChanges.tsx';
 import { openDb } from './sync/db.ts';
-import { browserNet } from './sync/device.ts';
+import { browserNet, request } from './sync/device.ts';
 import { SyncEngine } from './sync/engine.ts';
 import { Banner, Button, LiveRegion, useEngine } from './ui/kit.tsx';
 
@@ -75,6 +75,21 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const [persisted, setPersisted] = useState(true);
   const [update, setUpdate] = useState<(() => Promise<void>) | null>(null);
   const [announce, setAnnounce] = useState('');
+  const [alerts, setAlerts] = useState<{ code: string; detail: string }[]>([]);
+  const watchesAlerts = session?.role === 'charge' || session?.role === 'admin';
+
+  // SEC-20: charge and admin tablets show server alerts; checked every minute while online.
+  useEffect(() => {
+    if (!watchesAlerts || !s.online || locked) return;
+    const check = () =>
+      request(net, 'GET', '/api/v1/alerts')
+        .then((r) => r.json() as Promise<{ alerts: { code: string; detail: string }[] }>)
+        .then((r) => setAlerts(r.alerts))
+        .catch(() => undefined);
+    void check();
+    const t = setInterval(check, 60_000);
+    return () => clearInterval(t);
+  }, [watchesAlerts, s.online, locked]);
   const lastUnsynced = useRef(s.unsynced);
 
   // §8.1: ask the browser not to evict our data; on Safari `false` is normal, so only warn.
@@ -197,6 +212,15 @@ function Ready({ engine }: { engine: SyncEngine }) {
         {!s.online && <Banner tone="warn">{copy.offline}</Banner>}
         {s.alert === 'CHAIN_FORK' && <Banner tone="error">{copy.chainFork}</Banner>}
         {s.alert === 'STORAGE_LOST' && <Banner tone="error">{copy.storageLost}</Banner>}
+        {s.clockOffsetMs !== null && Math.abs(s.clockOffsetMs) > 120_000 && <Banner tone="warn">{copy.clockSkew(s.clockOffsetMs)}</Banner>}
+        {s.online &&
+          alerts.map((a) => (
+            <Banner key={`${a.code} ${a.detail}`} tone="error">
+              <span>
+                <strong>{copy.alerts[a.code] ?? a.code}.</strong> {a.detail}
+              </span>
+            </Banner>
+          ))}
         {!persisted && <Banner tone="warn">{copy.persist}</Banner>}
         {warn && (
           <Banner tone="warn">

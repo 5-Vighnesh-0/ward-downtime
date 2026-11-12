@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.turbo
+**/test-results
+**/playwright-report
+apps/web/e2e/.tls
+deploy/secrets
+.git
+.claude
+coverage

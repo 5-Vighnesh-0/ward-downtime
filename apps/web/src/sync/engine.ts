@@ -15,6 +15,7 @@ export interface EngineState {
   online: boolean;
   alert: Alert | null;
   lastPushAt: number;
+  clockOffsetMs: number | null; // SEC-28: how far this tablet's clock is off, as the server measured it
 }
 
 type Payload<T extends EventType> = Extract<AnyEvent, { type: T }>['payload'];
@@ -500,6 +501,7 @@ export class SyncEngine {
       online: s.online,
       alert: s.alert,
       lastPushAt: this.#meta.lastPushAt,
+      clockOffsetMs: this.#net.clockOffsetMs ?? null,
     };
   }
 }

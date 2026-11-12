@@ -34,6 +34,7 @@ export function createStreams(db: Db, bus: EventEmitter, opts: StreamOptions) {
       clearInterval(ping);
       bus.off('appended', onAppend);
       if (open.get(deviceId) === close) open.delete(deviceId);
+      req.log.info({ event: 'sse_close', deviceId });
       res.end();
     };
     const flush = async () => {
@@ -56,6 +57,7 @@ export function createStreams(db: Db, bus: EventEmitter, opts: StreamOptions) {
 
     open.get(deviceId)?.();
     open.set(deviceId, close);
+    req.log.info({ event: 'sse_open', deviceId, lastEventId: last });
     bus.on('appended', onAppend);
     const ping = setInterval(() => res.write(': ping\n\n'), opts.pingMs);
     req.raw.on('close', close);
@@ -66,5 +68,6 @@ export function createStreams(db: Db, bus: EventEmitter, opts: StreamOptions) {
     handle,
     close: (deviceId: string) => open.get(deviceId)?.(),
     closeAll: () => [...open.values()].forEach((c) => c()),
+    count: () => open.size,
   };
 }

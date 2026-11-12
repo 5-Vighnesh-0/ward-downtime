@@ -499,14 +499,14 @@ Base path `/api/v1`. JSON only. Every error uses one shape: `{"error":{"code":"�
 | `POST /events` | session + device | Push batch (§5.3) |
 | `GET /events?after={seq}&limit={n≤1000}` | session | Pull |
 | `GET /stream` | session | SSE; `Last-Event-ID` = last serverSeq |
-| `GET /time` | none | `{serverTime}` for skew |
+| `GET /alerts` | charge/admin | Active alerts (§13.3) for the red banner. (`GET /time` was not built: every session response carries `X-WDB-Clock-Offset-Ms` instead, §5.8) |
 | `POST /exports` `{passphrase}` or `{plaintext:true}` (admin only) | charge/admin | Recovery export (§7.3); replies with the `.wdbx` file as a download |
 | `POST /recovery/queue-import` | admin | Import a device queue file (§8.4) |
 | `POST /recovery/replay` | admin | Re-seed server from device-held log (§11.4) |
 | `GET /admin/devices`, `POST /admin/devices/{id}/approve`, `POST /admin/devices/{id}/revoke` | admin | Device lifecycle |
 | `GET /admin/staff`, `POST /admin/staff`, `PATCH /admin/staff/{id}` | admin | Staff management |
 | `GET /audit?before={id}&limit={n≤500}&staffId&deviceId&action` (newest first; `next` is the `before` for the next page), `POST /audit/export` `{passphrase}` (a POST so the passphrase never sits in a URL) | charge/admin | FR-14 |
-| `GET /admin/health` | admin | Head seq, chain status, device lag, skew, alerts |
+| `GET /admin/health` | admin | Head seq and hash, devices (last seen, clock offset, last deviceSeq), last-24 h counts from the audit log, push p50/p95, live SSE clients, alerts |
 
 ### 5.3 Push: request, response, idempotency
 
@@ -604,7 +604,7 @@ Rate limits use `@fastify/rate-limit` with its default in-memory store. That is 
 
 ### 5.8 Clock skew (SEC-28)
 
-The host runs `chrony` against the hospital NTP server, the only allowed outbound flow (§11.1). On each request the server computes `offset = serverNow − X-WDB-Client-Time` (ignored if RTT > 2 s) and stores it in `devices.last_clock_offset_ms`. If |offset| > 120 s, the device shows a banner, the admin health page lists the device, and metric `wdb_device_clock_offset_ms` records it. Ordering is unaffected.
+The host runs `chrony` against the hospital NTP server, the only allowed outbound flow (§11.1). On each signed-in request the server computes `offset = serverNow − X-WDB-Client-Time`, stores it with `last_seen_at` in `devices`, and returns it as `X-WDB-Clock-Offset-Ms`. The round-trip time is not measured, so the offset includes one-way network delay (milliseconds on a LAN). If |offset| > 120 s: the tablet shows a banner, the admin health page lists it, a `CLOCK_SKEW` alert is raised, and one `CLOCK_SKEW` audit row is written when the offset crosses the limit. Ordering is unaffected.
 
 ---
 
@@ -1166,6 +1166,8 @@ Copy rules: verbs on buttons, name the patient and bed in confirmations, no "Are
 
 Secrets (Docker secrets files under `/etc/wdb/secrets`, mode 0400, never in images or git): `db_owner_password`, `db_app_password`, `backup_key`, `step_ca_password`.
 
+As built (M5a, `compose.yaml`): a one-shot `migrate` service applies migrations as the owner and sets the app role's password; a one-shot `ca-root` copies only step-ca's public root into a volume Caddy reads, so the proxy never sees the CA's keys. Caddy runs as root inside its container with every capability dropped except `NET_BIND_SERVICE` (`shortcut:` move to a non-root user once its data volume is owned by that user). The server trusts exactly one proxy hop, so rate limits key on the tablet's address. The test database is behind the `test` profile. `backup` and `toxiproxy` come with M5b.
+
 Host network policy (SEC-26), set with nftables on the host:
 - Inbound: allow 443/80 from the ward VLAN, 22 from the IT jump host. Deny everything else.
 - Outbound: allow UDP 123 to the hospital NTP server and TCP to the backup target. Deny everything else, including the internet.
@@ -1181,7 +1183,7 @@ Host network policy (SEC-26), set with nftables on the host:
 7. Drill: unplug the hospital uplink and confirm the tablet still loads and syncs.
 8. Calendar: root expires in 10 years and the intermediate in 1 year; renewal is checked at each quarterly drill.
 
-Dev: `mkcert` creates a local root and `wdb.localhost` cert; Caddy uses those files.
+Dev and demo: the Compose stack's own step-ca initialises itself (root key on the server, so demo only) and Caddy gets its certificate from it over ACME, exactly as in production. The site names step-ca as its issuer explicitly, because Caddy would otherwise use its internal CA for `*.localhost`. Step-by-step: `docs/runbooks/RB-TLS.md`.
 
 ### 11.3 Backup and restore (SEC-13, SEC-27)
 
@@ -1295,7 +1297,7 @@ Additional E2E: E2E-07 (save unsynced to file and import), E2E-08 (idle lock at 
 
 ### 13.1 Logs (Pino, JSON to stdout, captured by Docker)
 
-- Fields on every line: `time`, `level`, `event` (stable name), `requestId`, `entryPoint` (`http` | `sse` | `cli` | `backup` | `verify`), `deviceId`, `staffId`. Patient labels are never logged, and payloads are never logged.
+- Fields: `time`, `level`, `requestId` on every request line; `event` (stable name), `deviceId`, `staffId` on key events. (`entryPoint` was dropped: every line so far is HTTP or SSE.) Patient labels are never logged, and payloads are never logged. A test asserts no PIN, cookie or label reaches the log.
 - Redaction paths: `req.headers.cookie`, `req.headers.authorization`, `req.headers["x-wdb-device-sig"]`, `*.pin`, `*.label`, `*.payload`, `res.headers["set-cookie"]` → `"[REDACTED]"`. Request and response bodies are never logged.
 - Key events: `push_batch` {count, appended, duplicate, refused}, `event_refused` {code, eventId}, `signin_fail` {staffId, deviceId}, `chain_verify` {ok, firstBadSeq}, `sse_open`/`sse_close`, `backup_done` {headSeq, bytes, ms}.
 
@@ -1315,11 +1317,13 @@ Additional E2E: E2E-07 (save unsynced to file and import), E2E-08 (idle lock at 
 | `wdb_chain_verify_failures_total` | counter | none |
 | `wdb_backup_age_seconds` | gauge | none |
 
+Built in M5a: the head, devices, 24-hour counts (from `audit_log`, so they survive restarts), push p50/p95 (in memory) and SSE clients. Not built: `wdb_conflicts_open` (the server keeps no board), per-device lag in events (the server cannot see a tablet's unsent count), auth failures by kind, and backup age (M5b).
+
 No tracing in v1. Every log line carries `requestId`, which covers following one push across server code. Add OTel traces and metrics when a collector exists.
 
 ### 13.3 Alerts (SEC-20)
 
-There is no external pager on an isolated LAN. Alerts show as a red banner with icon on admin and charge devices, are logged at `error`, and are counted on `/admin/health`. Each has a 3-line runbook in `docs/runbooks/`.
+There is no external pager on an isolated LAN. Alerts show as a red banner with icon on admin and charge devices (polled every minute from `GET /alerts`), are logged at `error` when first raised, and are listed on `/admin/health`. Each has a 3-line runbook in `docs/runbooks/alerts.md`. Built in M5a: AUTH_FAILURES, SIGNATURE_FAILURE, EVENT_FLOOD, CLOCK_SKEW, and DEVICE_LAGGING as "not seen for an hour" (the unsent-count half needs a device report). CHAIN_BREAK and BACKUP_STALE come with M5b.
 
 | Alert | Condition |
 |---|---|
@@ -1360,7 +1364,7 @@ Order matches prd.md §10 and TASKS.md. Each milestone ends with tests passing, 
 | **M2 Ward server** | **M2a (done):** schema + migrations, append-only grants and triggers, canonical JSON, Ed25519 verify, push/pull, idempotency, ordering, hash chain, `verify-chain`. **M2b (done):** enrollment, admin approve/revoke, bootstrap CLI, PIN sign-in with lockout, sessions, CSRF, rate limits, backpressure, audit rows, SSE. **Moved to M3/M5:** staff and audit-view endpoints (M3, with their screens), clock-skew recording (SEC-28) and alerts (SEC-20) (M5) | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
 | **M3 Offline PWA** | **M3a (done):** Dexie stores, device key and signing, HLC, outbox write path, push with backoff, pull with chain check, SSE with resync and polling fallback, optimistic view, revoke wipe; tested against the real server. **M3b (done):** enroll, sign-in (online, then offline PIN verifier), idle lock, board, bed sheet (admit, move, rename, discharge), My changes with encrypted save-to-file, unsynced counter, banners, Admin (devices, staff, ward beds), Audit view, service worker with update prompt; server staff and audit-view endpoints and `disabledStaff`. **Moved:** Conflicts, Unplaced and Recovery screens and audit export to M4 (with FR-7/FR-11); board filters, per-ward lock time and clock-skew banner to M5. **M3c (done):** Playwright on Chromium, Firefox and WebKit: E2E-02/03/04/07/08 (E2E-07 save only; import is M4), A11Y-03 target size, PERF-01/03/05/06 measured; `e2e` CI job. E2E-04 runs the outage for seconds, not a mocked 30 min. **Still manual:** the real-iPad rows of §8.2 and PERF on the reference tablet (an iPad is needed). Full list: Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
 | **M4 Conflicts + export** | **M4a (done):** Conflicts screen (charge/admin; each candidate's label, temp ID, staff, tablet, tablet time), resolve dialog with `candidatesSeen`, Unplaced screen with re-admit under the same temp ID (E13), plain-language outcome reasons in My changes, a "Choose who stays" button on a conflict bed; E2E-01 in both reconnect orders and E2E-05 on all three browsers. **M4b (done):** recovery export JSON+CSV in `.wdbx` from one shared builder (server, or the tablet's own log when the server is down), `exports` table (approved 2026-11-12; insert-only for the app), decrypt CLI, encrypted audit export, admin queue import of a saved tablet file (a revoked tablet's key still verifies its own events); Recovery screen with the open-conflict warning; E2E-06, E2E-07 import and UNIT-EXPORT on all three browsers. **Moved to M5:** recovery replay from a device (§11.4), with the backup/restore drill. Full list: Conflicts screen, resolve dialog, Unplaced, recovery export JSON+CSV in `.wdbx`, decrypt CLI, queue import | E2E-01 (both orders), E2E-05, E2E-06 pass; UNIT-EXPORT pass | Clinician acceptance of the human-resolve flow is untested (prd.md §9) |
-| **M5 Hardening** | Caddy + step-ca + TLS runbook, CSP/headers, rate limits, alerts, backups/restore, ransomware replay, Toxiproxy suite, ASVS L2 review, a11y pass, threat model review | All SEC-T-*, FI-*, A11Y-* pass; SIM-03/04 pass; restore drill and RB-TLS drill done and timed; security.md checklist ticked | CA setup mistakes; MDM availability for the demo |
+| **M5 Hardening** | **M5a (done):** `deploy/Dockerfile` (server: Node 22.23.4 slim, non-root, read-only, npm removed; web: Caddy 2.11.9 serving the build), `compose.yaml` stack (Caddy, server, migrate, Postgres, demo step-ca; internal networks; secrets files; test DB behind the `test` profile), TLS 1.3 only with the §9.3 headers, Pino JSON logs with redaction, clock skew (SEC-28), `/alerts` and `/admin/health` (SEC-20), RB-TLS and alert runbooks, `images` CI job (build + Trivy). Caddy 2.11.9 is a dated exception to the 14-day rule (approved 2026-11-12); one unfixed x/net finding is excepted until 2026-12-12 in `.trivyignore.yaml`. **M5b:** backups and restore drill, verify-chain at boot and hourly (CHAIN_BREAK), recovery replay, Toxiproxy FI-01–05. **M5c:** SEC-31 tests, ASVS L2 review, axe (approved) and keyboard E2E, board filters, per-ward lock time. Full list: Caddy + step-ca + TLS runbook, CSP/headers, rate limits, alerts, backups/restore, ransomware replay, Toxiproxy suite, ASVS L2 review, a11y pass, threat model review | All SEC-T-*, FI-*, A11Y-* pass; SIM-03/04 pass; restore drill and RB-TLS drill done and timed; security.md checklist ticked | CA setup mistakes; MDM availability for the demo |
 | **M6 v2** | `TASK_*` and `HANDOFF_NOTE_ADDED` events, reducer rules, UI, data-minimization review for notes (SEC-16, OQ-8) | New property tests extend PB-01/03; security.md updated (SEC-30) | Free-text notes may pull in clinical data; needs policy before build |
 
 ---

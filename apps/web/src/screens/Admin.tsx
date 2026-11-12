@@ -219,10 +219,68 @@ function WardBeds({ engine }: { engine: SyncEngine }) {
   );
 }
 
+interface Health {
+  headSeq: number;
+  headHash: string;
+  sseClients: number;
+  devices: { label: string; status: string; lastSeenAt: string | null; clockOffsetMs: number | null; lastDeviceSeq: number }[];
+  last24h: Record<string, number>;
+  pushMs: { count: number; p50: number | null; p95: number | null };
+  alerts: { code: string; detail: string }[];
+}
+
+/** design.md §13.2. The head hash is an external anchor: note it down to compare after a restore. */
+function HealthPanel({ net }: { net: Net }) {
+  const { data: h, error, reload } = useOnline<Health>(net, '/api/v1/admin/health');
+  if (error) return <Banner tone="warn">{error}</Banner>;
+  if (!h) return <p>Loading…</p>;
+  return (
+    <div className="flex flex-col gap-3">
+      <p>
+        Log head <strong className="tabular-nums">{h.headSeq}</strong>, hash <span className="font-mono">{h.headHash.slice(0, 16)}…</span> · {h.sseClients} tablets connected live
+      </p>
+      <p>
+        Last 24 h: {h.last24h.appended} changes added, {h.last24h.duplicate} repeats, {h.last24h.refused} refused, {h.last24h.signinFailures} failed sign-ins ·
+        push time p95 {h.pushMs.p95 === null ? '–' : `${Math.round(h.pushMs.p95)} ms`}
+      </p>
+      {h.alerts.length === 0 ? <p>No alerts.</p> : h.alerts.map((a) => <Banner key={`${a.code} ${a.detail}`} tone="error">{`${copy.alerts[a.code] ?? a.code}. ${a.detail}`}</Banner>)}
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-left">
+          <caption className="sr-only">Tablets</caption>
+          <thead>
+            <tr className="border-b-2 border-border">
+              {['Tablet', 'Status', 'Last seen', 'Clock off by', 'Changes sent'].map((x) => (
+                <th key={x} scope="col" className="p-2">
+                  {x}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {h.devices.map((d) => (
+              <tr key={d.label + d.lastSeenAt} className="border-b border-border">
+                <td className="p-2">{d.label}</td>
+                <td className="p-2">{d.status}</td>
+                <td className="p-2 tabular-nums">{d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : '–'}</td>
+                <td className="p-2 tabular-nums">{d.clockOffsetMs === null ? '–' : `${Math.round(d.clockOffsetMs / 1000)} s`}</td>
+                <td className="p-2 tabular-nums">{d.lastDeviceSeq}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Button onClick={reload}>Refresh</Button>
+    </div>
+  );
+}
+
 export function AdminScreen({ engine, net }: { engine: SyncEngine; net: Net }) {
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-2xl font-semibold">Admin</h1>
+      <Section title="Ward server health">
+        <HealthPanel net={net} />
+      </Section>
       <Section title="Devices">
         <Devices net={net} />
       </Section>

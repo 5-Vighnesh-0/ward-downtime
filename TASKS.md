@@ -36,7 +36,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 
 ## M5: Hardening
 - [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Done in M2b and M3b except the per-ward idle lock setting
-- [ ] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3)
+- [x] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3), Compose stack, logs, clock skew (SEC-28), health and alerts (SEC-20) (M5a)
 - [ ] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31)
 - [ ] Backup/restore drill, runbooks (SEC-27), recovery replay from a device (design.md §11.4, moved from M4)
 - [ ] Accessibility pass

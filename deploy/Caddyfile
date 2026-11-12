@@ -1,0 +1,42 @@
+# design.md §9.3, §11.2. TLS 1.3 only, certificates from the ward's own step-ca (works with the hospital network down).
+{
+	admin off
+	skip_install_trust
+}
+
+{$WDB_HOST:wdb.localhost} {
+	tls {
+		protocols tls1.3 tls1.3
+		# Named explicitly: Caddy would otherwise use its own internal CA for *.localhost names.
+		issuer acme {
+			dir https://step-ca:9000/acme/acme/directory
+			trusted_roots /step/root_ca.crt
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy same-origin
+		-Server
+	}
+	handle /api/* {
+		reverse_proxy server:3000 {
+			flush_interval -1 # SSE: send each event at once
+		}
+	}
+	handle {
+		root * /srv
+		# The app shell and service worker must be revalidated, or an update never reaches the tablets (§8.6).
+		@shell path / /index.html /sw.js /manifest.webmanifest
+		header @shell Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+http://{$WDB_HOST:wdb.localhost} {
+	redir https://{host}{uri} permanent
+}

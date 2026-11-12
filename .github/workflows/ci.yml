@@ -129,6 +129,34 @@ jobs:
           name: sbom
           path: sbom.cdx.json
 
+  # The deployable images (design.md §11.1) must build and carry no fixable HIGH/CRITICAL CVEs.
+  # Accepted exceptions live in .trivyignore.yaml, each with a reason and an expiry.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose build server caddy
+      - name: Scan server image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          scan-type: image
+          image-ref: wdb/server:local
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: '1'
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          scan-type: image
+          image-ref: wdb/web:local
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: '1'
+
   synthea:
     runs-on: ubuntu-latest
     env:

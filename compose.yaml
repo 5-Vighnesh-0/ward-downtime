@@ -1,6 +1,126 @@
-# Dev/test only for now. The production stack (Caddy, step-ca, server, encrypted volume) arrives in M5.
+# Ward server stack (design.md §11.1). First time:
+#   ./deploy/init-secrets.sh && docker compose up -d --build
+# Then create the first admin (PIN on stdin) and approve the first tablet; see docs/runbooks/RB-TLS.md.
+# The test database (db-test) is only started on request: docker compose up -d db-test
+name: warddowntime
+
+x-hardened: &hardened
+  read_only: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  restart: unless-stopped
+
 services:
+  caddy:
+    <<: *hardened
+    build: { context: ., dockerfile: deploy/Dockerfile, target: web }
+    image: wdb/web:local
+    # shortcut: Caddy runs as root in its image (all capabilities dropped but NET_BIND_SERVICE); move to a non-root
+    # user once the data volume ownership is set up for it.
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      WDB_HOST: ${WDB_HOST:-wdb.localhost}
+    ports:
+      - ${WDB_BIND:-127.0.0.1}:${WDB_HTTPS_PORT:-443}:443
+      - ${WDB_BIND:-127.0.0.1}:${WDB_HTTP_PORT:-80}:80
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ca_root:/step:ro # the public root certificate only, never the CA's keys
+    tmpfs: [/tmp]
+    networks:
+      edge: {}
+      app:
+        aliases: ['${WDB_HOST:-wdb.localhost}'] # so step-ca can reach Caddy for the ACME challenge
+    depends_on:
+      ca-root: { condition: service_completed_successfully }
+      server: { condition: service_started }
+
+  server:
+    <<: *hardened
+    build: { context: ., dockerfile: deploy/Dockerfile, target: server }
+    image: wdb/server:local
+    environment:
+      DATABASE_URL: postgres://wdb_app@postgres:5432/wdb
+      PGPASSWORD_FILE: /run/secrets/db_app_password
+      WDB_ORIGIN: https://${WDB_HOST:-wdb.localhost}${WDB_ORIGIN_PORT:-}
+      WDB_WARD_NAME: ${WDB_WARD_NAME:-Ward A}
+      WDB_PROXY_HOPS: '1'
+    secrets: [db_app_password]
+    tmpfs: [/tmp]
+    networks: [app, db]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  migrate:
+    build: { context: ., dockerfile: deploy/Dockerfile, target: server }
+    image: wdb/server:local
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    command: [node, src/migrate.ts]
+    environment:
+      DATABASE_URL: postgres://wdb_owner@postgres:5432/wdb
+      PGPASSWORD_FILE: /run/secrets/db_owner_password
+      WDB_APP_PASSWORD_FILE: /run/secrets/db_app_password
+    secrets: [db_owner_password, db_app_password]
+    networks: [db]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_USER: wdb_owner
+      POSTGRES_DB: wdb
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_owner_password
+    secrets: [db_owner_password]
+    volumes: [pgdata:/var/lib/postgresql/data] # on the host's encrypted (LUKS) disk in production, §9.9
+    networks: [db]
+    healthcheck:
+      test: [CMD, pg_isready, -U, wdb_owner, -d, wdb]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Demo CA: initialises itself on first start. Production follows RB-TLS instead (root key kept offline).
+  step-ca:
+    image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE] # the step-ca binary carries this file capability and will not start without it
+    environment:
+      DOCKER_STEPCA_INIT_NAME: Ward Downtime Board demo CA
+      DOCKER_STEPCA_INIT_DNS_NAMES: step-ca
+      DOCKER_STEPCA_INIT_ACME: 'true'
+      DOCKER_STEPCA_INIT_PASSWORD_FILE: /run/secrets/step_ca_password
+    secrets: [step_ca_password]
+    volumes: [step:/home/step]
+    networks: [app]
+    healthcheck:
+      test: [CMD, step, ca, health, --ca-url, https://step-ca:9000, --root, /home/step/certs/root_ca.crt]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # Copies the CA's public root certificate where Caddy can read it. step-ca keeps its own files private.
+  ca-root:
+    image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270
+    user: '0'
+    entrypoint: [/bin/sh, -c, 'install -m 0644 /home/step/certs/root_ca.crt /pub/root_ca.crt']
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE] # read step-ca's private directory, as root, once
+    volumes: ['step:/home/step:ro', 'ca_root:/pub']
+    network_mode: none
+    depends_on:
+      step-ca: { condition: service_healthy }
+
   db-test:
+    profiles: [test]
     image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
     environment:
       POSTGRES_USER: wdb_owner
@@ -11,3 +131,20 @@ services:
       - 127.0.0.1:55432:5432
     tmpfs:
       - /var/lib/postgresql/data
+
+networks:
+  edge: {}
+  app: { internal: true } # no route out: the stack works with the hospital network down
+  db: { internal: true }
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}
+  step: {}
+  ca_root: {}
+
+secrets:
+  db_owner_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/db_owner_password' }
+  db_app_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/db_app_password' }
+  step_ca_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/step_ca_password' }

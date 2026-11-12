@@ -13,3 +13,4 @@ sbom.cdx.json
 apps/web/e2e/.tls/
 apps/web/test-results/
 apps/web/playwright-report/
+deploy/secrets/

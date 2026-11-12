@@ -1,0 +1,9 @@
+# Accepted findings, each with a reason and an expiry (Trivy fails again after it). Review at every expiry.
+vulnerabilities:
+  - id: CVE-2026-78661
+    paths: ['usr/bin/caddy']
+    statement: >-
+      golang.org/x/net/html DoS compiled into Caddy. No Caddy release includes the fix yet (2.11.9 still flags it,
+      checked 2026-11-12). Our Caddyfile parses no HTML (no templates, no markdown); which Caddy modules reach
+      x/net/html is NOT VERIFIED. Re-check for a fixed Caddy release by the expiry.
+    expired_at: 2026-12-12

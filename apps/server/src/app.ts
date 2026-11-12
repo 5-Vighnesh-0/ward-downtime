@@ -15,6 +15,7 @@ import type { Db } from './db.ts';
 import { readEntries } from './entries.ts';
 import { createAuditExport, createRecoveryExport, type ExportFile } from './recovery.ts';
 import { publicKeyFromRaw } from './signature.ts';
+import { createMonitor, SKEW_ALERT_MS } from './monitor.ts';
 import { createStreams } from './stream.ts';
 
 export interface AppOptions {
@@ -23,7 +24,12 @@ export interface AppOptions {
   streamBacklog?: number;
   streamPingMs?: number;
   ward?: string | null; // shown in recovery exports (WDB_WARD_NAME)
+  log?: { level: string; stream?: NodeJS.WritableStream }; // JSON logs (design.md §13.1); off when absent
+  proxyHops?: number; // 1 behind Caddy, so rate limits see the tablet's address, not Caddy's
 }
+
+// Never logged (design.md §13.1). Bodies are never logged at all; these guard anything passed to the logger.
+export const LOG_REDACT = ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-wdb-device-sig"]', 'res.headers["set-cookie"]', '*.pin', '*.label', '*.payload'];
 
 interface Auth {
   staffId: string;
@@ -76,7 +82,15 @@ const AuditQuery = z.strictObject({
 const error = (code: string, message: string, details?: unknown) => ({ error: { code, message, ...(details ? { details } : {}) } });
 
 export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
-  const app = Fastify({ bodyLimit: 262_144, logger: false, genReqId: () => randomUUID(), requestIdHeader: false }); // SEC-23
+  const app = Fastify({
+    bodyLimit: 262_144, // SEC-23
+    logger: opts.log ? { level: opts.log.level, redact: { paths: LOG_REDACT, censor: '[REDACTED]' }, ...(opts.log.stream ? { stream: opts.log.stream } : {}) } : false,
+    requestIdLogLabel: 'requestId',
+    trustProxy: (_address: string, hop: number) => hop < (opts.proxyHops ?? 0),
+    genReqId: () => randomUUID(),
+    requestIdHeader: false,
+  });
+  const monitor = createMonitor(db, app.log);
   const bus = new EventEmitter().setMaxListeners(100);
   const streams = createStreams(db, bus, { backlog: opts.streamBacklog ?? 1000, pingMs: opts.streamPingMs ?? 20_000 });
   const maxInflight = opts.maxInflightPushes ?? 500;
@@ -114,7 +128,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     if (!token) return deny(reply, 401, 'NO_SESSION', 'Sign in first');
     const hash = tokenHash(token);
     const [row] = await db
-      .select({ s: sessions, role: staff.role, staffStatus: staff.status, deviceStatus: devices.status })
+      .select({ s: sessions, role: staff.role, staffStatus: staff.status, deviceStatus: devices.status, offset: devices.lastClockOffsetMs })
       .from(sessions)
       .innerJoin(staff, eq(sessions.staffId, staff.staffId))
       .innerJoin(devices, eq(sessions.deviceId, devices.deviceId))
@@ -129,6 +143,14 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     if (roles && !roles.includes(row.role)) return deny(reply, 403, 'ROLE_FORBIDDEN', 'Not allowed for this role');
     await db.update(sessions).set({ lastSeenAt: new Date(now) }).where(eq(sessions.tokenHash, hash));
     req.auth = { staffId: row.s.staffId, role: row.role, deviceId: row.s.deviceId, tokenHash: hash };
+    // SEC-28: record how far the tablet's clock is off. Display and audit only; ordering never uses it.
+    const clientMs = Date.parse(String(req.headers['x-wdb-client-time'] ?? ''));
+    const offset = Number.isFinite(clientMs) ? now - clientMs : null;
+    if (offset !== null) reply.header('x-wdb-clock-offset-ms', String(offset));
+    await db.update(devices).set({ lastSeenAt: new Date(now), ...(offset !== null ? { lastClockOffsetMs: offset } : {}) }).where(eq(devices.deviceId, row.s.deviceId));
+    if (offset !== null && Math.abs(offset) > SKEW_ALERT_MS && !(row.offset !== null && Math.abs(row.offset) > SKEW_ALERT_MS)) {
+      await audit(req, { staffId: row.s.staffId, deviceId: row.s.deviceId, action: 'CLOCK_SKEW', outcome: 'ok', code: String(offset) });
+    }
   };
 
   /** Device named and signed in X-WDB-Device-Sig, or null. */
@@ -184,6 +206,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
 
       const { staffId, pin } = b.data;
       const fail = async (code: string, status = 401) => {
+        req.log.warn({ event: 'signin_fail', staffId, deviceId: dev.deviceId, code });
         await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_FAIL', outcome: 'denied', code });
         return deny(reply, status, code, code === 'ACCOUNT_LOCKED' ? 'Account locked for 15 minutes' : 'Staff ID or PIN not recognised');
       };
@@ -233,9 +256,14 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         if (!body.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid batch', z.flattenError(body.error)));
         if (body.data.deviceId !== req.auth?.deviceId) return deny(reply, 403, 'DEVICE_MISMATCH', 'Batch is not from the signed-in device');
         inflight++;
+        const t0 = performance.now();
         try {
           const out = await appendBatch(db, body.data.deviceId, body.data.events, { requestId: req.id });
           if (!out.ok) return deny(reply, out.status, out.code, out.code === 'DEVICE_REVOKED' ? 'Device revoked' : 'Device not active');
+          monitor.recordPush(performance.now() - t0);
+          const by = (st: string) => out.results.filter((r) => r.status === st).length;
+          req.log.info({ event: 'push_batch', deviceId: body.data.deviceId, staffId: req.auth?.staffId, count: out.results.length, appended: by('appended'), duplicate: by('duplicate'), refused: by('refused') });
+          for (const r of out.results) if (r.status === 'refused') req.log.warn({ event: 'event_refused', code: r.code, eventId: r.eventId, deviceId: body.data.deviceId });
           if (out.results.some((r) => r.status === 'appended')) bus.emit('appended');
           return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
         } finally {
@@ -377,6 +405,10 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       if (out.results.some((r) => r.status === 'appended')) bus.emit('appended');
       return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
     });
+
+    // --- Health and alerts (SEC-20): alerts for charge and admin tablets, the full panel for admins ---
+    api.get('/api/v1/alerts', { onRequest: requireSession(['charge', 'admin']) }, async () => ({ alerts: await monitor.alerts() }));
+    api.get('/api/v1/admin/health', { onRequest: admin }, async () => ({ ...(await monitor.health()), sseClients: streams.count() }));
 
     // --- Audit view (FR-14, SEC-18): newest first, paged with `before` ---
     api.get('/api/v1/audit', { onRequest: requireSession(['charge', 'admin']) }, async (req, reply) => {

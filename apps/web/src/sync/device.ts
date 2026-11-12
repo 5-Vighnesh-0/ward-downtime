@@ -7,6 +7,7 @@ export interface Net {
   baseUrl: string; // '' in the browser: same origin
   fetch: typeof fetch;
   now: () => number;
+  clockOffsetMs?: number; // last X-WDB-Clock-Offset-Ms from the server (SEC-28), display only
 }
 
 export const browserNet = (): Net => ({ baseUrl: '', fetch: (input, init) => fetch(input, init), now: () => Date.now() });
@@ -36,6 +37,8 @@ export async function request(net: Net, method: string, path: string, body?: unk
     },
     body: body === undefined ? null : JSON.stringify(body),
   });
+  const offset = Number(res.headers.get('x-wdb-clock-offset-ms') ?? NaN);
+  if (Number.isFinite(offset)) net.clockOffsetMs = offset;
   if (res.ok) return res;
   const err = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;
   const retry = Number(res.headers.get('retry-after'));

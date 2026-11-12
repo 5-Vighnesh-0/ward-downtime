@@ -62,7 +62,11 @@ export async function setUpTablet(page: Page, role: Role = 'admin', label = 'Tes
 }
 
 export async function signIn(page: Page, staffId: string): Promise<void> {
-  await page.getByLabel('Staff ID').fill(staffId, { timeout: 15_000 });
+  // Re-fill until it sticks: right after approval the screen can re-render under a test-speed fill.
+  await expect(async () => {
+    await page.getByLabel('Staff ID').fill(staffId, { timeout: 15_000 });
+    await expect(page.getByLabel('Staff ID')).toHaveValue(staffId, { timeout: 500 });
+  }).toPass({ timeout: 20_000 });
   await page.getByLabel('PIN (6 to 8 digits)').fill(PIN);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('heading', { name: 'Beds' })).toBeVisible({ timeout: 15_000 });
