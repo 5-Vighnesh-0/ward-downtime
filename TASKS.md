@@ -8,10 +8,10 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Synthetic data script + real-identifier CI check (SEC-17)
 
 ## M1: Shared core (`packages/shared`)
-- [ ] Event types + Zod schemas (FR-3)
-- [ ] Reducer: admit, discharge, transfer, rename, resolve (FR-5 to FR-9)
-- [ ] Conflict rules and edge cases (FR-6, FR-8)
-- [ ] Property tests: convergence and idempotent replay (FR-4)
+- [x] Event types + Zod schemas (FR-3)
+- [x] Reducer: admit, discharge, transfer, rename, resolve (FR-5 to FR-9)
+- [x] Conflict rules and edge cases (FR-6, FR-8)
+- [x] Property tests: convergence and idempotent replay (FR-4)
 
 ## M2: Ward server (`apps/server`)
 - [ ] Postgres schema, append-only event table, hash chain (SEC-10)

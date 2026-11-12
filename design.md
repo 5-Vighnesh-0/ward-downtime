@@ -735,6 +735,7 @@ stateDiagram-v2
 | E11 | Rename of a patient another device just created | Works once the admit has a lower serverSeq; otherwise noop `UNKNOWN_PATIENT` (only possible if the device never saw the admit, which it needs in order to choose the patient) |
 | E12 | Resolution recorded offline | Queued as an event; takes effect when ordered; if candidates changed meanwhile → E7 |
 | E13 | Re-admit an unplaced (rejected) patient to another bed | Allowed; same `patientId`; the export shows both events |
+| E14 | Every candidate of an open conflict is discharged | Conflict closes (`resolved`, `resolvedBy` = last discharge); bed becomes empty. Nobody is left to choose between |
 
 ### 6.6 Optimistic view vs. confirmed board
 
@@ -1349,7 +1350,7 @@ Order matches prd.md §10 and TASKS.md. Each milestone ends with tests passing, 
 | Milestone | Deliverables | Exit criteria | Risks |
 |---|---|---|---|
 | **M0 Setup** | pnpm + Turborepo, TS strict, ESLint, `tools/` package (`seed`, `synthea:labels`, `check:synthetic`), CI with the jobs that have work: quality, deps, secrets, sast, trivy + SBOM, synthea. Integration, e2e and nightly jobs arrive in M2/M3 | CI green; gitleaks/Semgrep/Trivy/SBOM jobs run | Synthea needs Java 17+ (CI job installs Temurin 21; local runs need a JDK) |
-| **M1 Shared core** | Zod schemas, JCS, Ed25519 sign/verify wrappers, HLC, reducer (all §6.3 rules), property tests PB-01..08, sim harness SIM-01/02 | All §6.3 rows and E1–E13 have unit tests; PB suite passes 1000 runs; sim reproducible by seed | Reducer rule gaps found late; mitigation: tests first, sim early |
+| **M1 Shared core** | Zod schemas, reducer (all §6.3 rules, E1–E14), property tests PB-01..06. JCS, Ed25519, HLC and PB-07/08 moved to M2; sim harness to M2/M3 | All §6.3 rows and E1–E13 have unit tests; PB suite passes 1000 runs; sim reproducible by seed | Reducer rule gaps found late; mitigation: tests first, sim early |
 | **M2 Ward server** | Drizzle schema + migrations (needs schema approval), roles/grants, push/pull/SSE, idempotency, hash chain, `verify-chain`, enrollment, sessions, audit | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
 | **M3 Offline PWA** | Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
 | **M4 Conflicts + export** | Conflicts screen, resolve dialog, Unplaced, recovery export JSON+CSV in `.wdbx`, decrypt CLI, queue import | E2E-01 (both orders), E2E-05, E2E-06 pass; UNIT-EXPORT pass | Clinician acceptance of the human-resolve flow is untested (prd.md §9) |
