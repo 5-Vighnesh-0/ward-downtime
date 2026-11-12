@@ -14,10 +14,10 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Property tests: convergence and idempotent replay (FR-4)
 
 ## M2: Ward server (`apps/server`)
-- [ ] Postgres schema, append-only event table, hash chain (SEC-10)
-- [ ] Push/pull endpoints, idempotency by event ID (FR-4)
-- [ ] Server-assigned order (FR-5, SEC-12)
-- [ ] Signature, device and role checks (SEC-4 to SEC-9)
+- [x] Postgres schema, append-only event table, hash chain (SEC-10)
+- [x] Push/pull endpoints, idempotency by event ID (FR-4)
+- [x] Server-assigned order (FR-5, SEC-12)
+- [ ] Signature, device and role checks (SEC-4 to SEC-9). Signature, device status and role checks done (M2a); enrollment and sessions in M2b
 - [ ] SSE live updates
 - [ ] Audit log (FR-14, SEC-18)
 

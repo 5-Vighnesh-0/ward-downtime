@@ -5,7 +5,9 @@ const MAX_EVENT_BYTES = 4096;
 
 const patientId = z.string().regex(/^T-[A-Z0-9]{3}-[0-9]{4,6}$/);
 const bedId = z.string().regex(/^B[0-9]{2}$/);
-const label = z.string().min(1).max(40);
+// No control characters: they break display, and Postgres jsonb rejects NUL outright.
+const noControl = /^[^\u0000-\u001f\u007f]*$/;
+const label = z.string().min(1).max(40).regex(noControl);
 
 const envelope = {
   v: z.literal(1),
@@ -25,7 +27,7 @@ const event = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
 export const WardConfiguredEvent = event(
   'WARD_CONFIGURED',
   z.strictObject({
-    beds: z.array(z.strictObject({ bedId, label: z.string().min(1).max(16) })).min(1).max(60),
+    beds: z.array(z.strictObject({ bedId, label: z.string().min(1).max(16).regex(noControl) })).min(1).max(60),
   }),
 );
 export const AdmitEvent = event('ADMIT', z.strictObject({ patientId, label, bedId }));

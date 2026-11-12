@@ -266,7 +266,7 @@ Canonicalization uses JSON Canonicalization Scheme ([RFC 8785](https://www.rfc-e
 
 ### 4.2 Event types (v1) and payload schemas
 
-All payloads use `.strict()`: unknown keys are rejected (SEC-11). String limits are in code points.
+All payloads use `.strict()`: unknown keys are rejected (SEC-11). String limits are in code points. Labels refuse control characters (U+0000–U+001F, U+007F): they break display, and Postgres `jsonb` rejects NUL.
 
 | Type | Payload | Allowed roles (§9.5) |
 |---|---|---|
@@ -387,7 +387,6 @@ CREATE TABLE events (
   UNIQUE (device_id, device_seq),
   CHECK (octet_length(body::text) <= 4096)
 );
-CREATE INDEX events_device_idx ON events (device_id, device_seq);
 
 -- Singleton ordering head
 CREATE TABLE log_head (
@@ -536,10 +535,10 @@ X-Request-Id: 7f1c2e9a-0b51-4d27-9c35-6c7a1d0e0f11
 2. `SELECT … FROM log_head WHERE id=1 FOR UPDATE` serializes all appends. At 20 devices this lock is held for a few ms per batch.
 3. For each event, in order:
    - Check the Zod schema (`.strict()`) → refused `SCHEMA_INVALID`.
+   - `event.deviceId` ≠ batch device → refused `DEVICE_MISMATCH`. (Checked before the signature, because the signature is verified with the batch device's key.)
    - Verify the Ed25519 signature against `devices.public_key` → refused `SIGNATURE_INVALID` (and alert).
-   - `event.deviceId` ≠ batch device → refused `DEVICE_MISMATCH`.
-   - Check that the staff member is active and their role permits the type (§9.5) → refused `ROLE_FORBIDDEN`.
-   - Look up `event_id`. If it exists with the same `body_sha256` → `duplicate`: return the original `serverSeq` and do not append. If it exists with a different hash → refused `IDEMPOTENCY_MISMATCH`. The lookup runs under the head lock, so there is no check-then-insert race, and the `UNIQUE(event_id)` constraint is a backstop.
+   - Look up `event_id`. If it exists with the same `body_sha256` → `duplicate`: return the original `serverSeq` and do not append. If it exists with a different hash → refused `IDEMPOTENCY_MISMATCH`. The lookup runs under the head lock, so there is no check-then-insert race, and the `UNIQUE(event_id)` constraint is a backstop. This comes before the role check, so a retry after a staff change still gets `duplicate`.
+   - Check that the staff member exists, is active and their role permits the type (§9.5) → refused `ROLE_FORBIDDEN`.
    - Check `deviceSeq > devices.last_device_seq`, else refused `DEVICE_SEQ_REGRESSION` (signals local data loss, §8.5).
    - Otherwise: `serverSeq = last_seq + 1`, compute `hash`, INSERT, and update `log_head` and `devices.last_device_seq`.
 4. COMMIT, then reply. A reply is only sent after commit, so an acknowledged event is durable (NFR-Durability).
@@ -1351,7 +1350,7 @@ Order matches prd.md §10 and TASKS.md. Each milestone ends with tests passing, 
 |---|---|---|---|
 | **M0 Setup** | pnpm + Turborepo, TS strict, ESLint, `tools/` package (`seed`, `synthea:labels`, `check:synthetic`), CI with the jobs that have work: quality, deps, secrets, sast, trivy + SBOM, synthea. Integration, e2e and nightly jobs arrive in M2/M3 | CI green; gitleaks/Semgrep/Trivy/SBOM jobs run | Synthea needs Java 17+ (CI job installs Temurin 21; local runs need a JDK) |
 | **M1 Shared core** | Zod schemas, reducer (all §6.3 rules, E1–E14), property tests PB-01..06. JCS, Ed25519, HLC and PB-07/08 moved to M2; sim harness to M2/M3 | All §6.3 rows and E1–E13 have unit tests; PB suite passes 1000 runs; sim reproducible by seed | Reducer rule gaps found late; mitigation: tests first, sim early |
-| **M2 Ward server** | Drizzle schema + migrations (needs schema approval), roles/grants, push/pull/SSE, idempotency, hash chain, `verify-chain`, enrollment, sessions, audit | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
+| **M2 Ward server** | **M2a (done):** Drizzle schema + migrations (approved), grants and append-only triggers, canonical JSON, Ed25519 verify, push/pull, idempotency, ordering, hash chain, `verify-chain`, PB-07/08. **M2b:** enrollment, staff sessions, device-signature auth, rate limits, audit rows, SSE | INT-* pass; SEC-T-SIG/REPLAY/SIZE/TAMPER/ROLE pass; PERF-02 measured | Lock contention (low at 20 devices) |
 | **M3 Offline PWA** | Dexie stores, sync engine, optimistic view, board UI, bed sheet, persist request, unsynced counter, save-to-file, SW + update prompt, enrollment and sign-in screens, offline credential | E2E-02/03/04/07/08 pass on Chromium/Firefox/WebKit; real iPad test of §8.2 rows recorded; PERF-01/03/05 measured | **iOS storage behaviour** (highest risk), Ed25519 non-extractable key persistence on Safari |
 | **M4 Conflicts + export** | Conflicts screen, resolve dialog, Unplaced, recovery export JSON+CSV in `.wdbx`, decrypt CLI, queue import | E2E-01 (both orders), E2E-05, E2E-06 pass; UNIT-EXPORT pass | Clinician acceptance of the human-resolve flow is untested (prd.md §9) |
 | **M5 Hardening** | Caddy + step-ca + TLS runbook, CSP/headers, rate limits, alerts, backups/restore, ransomware replay, Toxiproxy suite, ASVS L2 review, a11y pass, threat model review | All SEC-T-*, FI-*, A11Y-* pass; SIM-03/04 pass; restore drill and RB-TLS drill done and timed; security.md checklist ticked | CA setup mistakes; MDM availability for the demo |

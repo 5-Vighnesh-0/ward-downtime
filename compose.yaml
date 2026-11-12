@@ -1,0 +1,13 @@
+# Dev/test only for now. The production stack (Caddy, step-ca, server, encrypted volume) arrives in M5.
+services:
+  db-test:
+    image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
+    environment:
+      POSTGRES_USER: wdb_owner
+      POSTGRES_DB: wdb_test
+      # Throwaway test database bound to localhost only, so no password is needed or stored.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - 127.0.0.1:55432:5432
+    tmpfs:
+      - /var/lib/postgresql/data

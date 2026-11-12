@@ -32,6 +32,10 @@ describe('EventSchema', () => {
     expect(ok(withPayload({ label: '' }))).toBe(false);
     expect(ok(withPayload({ label: 'x'.repeat(41) }))).toBe(false);
     expect(ok(withPayload({ label: 'x'.repeat(40) }))).toBe(true);
+    expect(ok(withPayload({ label: 'Zoë O\'Neil-Ng' }))).toBe(true);
+    expect(ok(withPayload({ label: 'a\u0000b' }))).toBe(false); // Postgres jsonb rejects NUL
+    expect(ok(withPayload({ label: 'a\nb' }))).toBe(false);
+    expect(ok(withPayload({ label: 'a\u007fb' }))).toBe(false);
     expect(ok(withPayload({ patientId: 'P-1' }))).toBe(false);
     expect(ok(withPayload({ bedId: 'bed4' }))).toBe(false);
     expect(ok({ ...e, eventId: 'not-a-uuid' })).toBe(false);

@@ -14,7 +14,7 @@ Offline-first hospital ward bed board. Event-sourced log, server-assigned order,
 - Ordering never depends on client clocks. Client times are for display and audit only.
 
 ## Stack
-TypeScript strict, pnpm + Turborepo. Shared reducer package used by client and server. React 19 + Vite PWA, Dexie/IndexedDB. Fastify + Postgres 16 + Drizzle. Caddy + internal CA. Docker Compose. Vitest, fast-check, Playwright, Toxiproxy. Also approved: Zod, Workbox via vite-plugin-pwa, TanStack Query (online admin reads only), Zustand, Tailwind, Radix UI, Pino, step-ca, pg, @fastify/cookie, @fastify/rate-limit (see design.md §3.3, §16). Dev only: eslint, typescript-eslint, @types/node, @faker-js/faker; Synthea runs from its release jar (Java 17+). OpenTelemetry is deferred out of v1. Do not add a dependency outside this list without asking.
+TypeScript strict, pnpm + Turborepo. Shared reducer package used by client and server. React 19 + Vite PWA, Dexie/IndexedDB. Fastify + Postgres 16 + Drizzle. Caddy + internal CA. Docker Compose. Vitest, fast-check, Playwright, Toxiproxy. Also approved: Zod, Workbox via vite-plugin-pwa, TanStack Query (online admin reads only), Zustand, Tailwind, Radix UI, Pino, step-ca, pg, @fastify/cookie, @fastify/rate-limit (see design.md §3.3, §16). Dev only: eslint, typescript-eslint, @types/node, @types/pg, drizzle-kit, @faker-js/faker; Synthea runs from its release jar (Java 17+). OpenTelemetry is deferred out of v1. Do not add a dependency outside this list without asking.
 
 ## Layout
 ```
@@ -26,7 +26,7 @@ docs/             adr/, runbooks/
 ```
 
 ## Commands
-`pnpm install` · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm e2e` · `docker compose up`
+`pnpm install` · `docker compose up -d db-test` (needed by `pnpm test`) · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm --filter @wdb/server migrate` · `pnpm --filter @wdb/server verify-chain` · `pnpm e2e` · `docker compose up`
 
 ## Working style
 - Tests first for the reducer and sync logic. Convergence must be proven with property-based tests.
