@@ -25,4 +25,14 @@ export const copy = {
   blocked: 'Not shown on the board: the bed was taken before this was sent. It will appear as a conflict once sent.',
   notApplied: (reason: string) => `Not applied (${reason}).`,
   notKept: 'Not kept: a charge nurse chose another patient for this bed.',
+  noConflicts: 'No conflicts. When two patients are placed in the same bed, they appear here for you to choose.',
+  noUnplaced: 'Everyone has a bed. Patients not kept after a conflict appear here.',
+  // §10.6: plain reasons for outcomes the author needs to act on; other codes show as-is.
+  reasons: {
+    BED_KNOWN_OCCUPIED: 'The bed already had a patient when this was made.',
+    CANDIDATES_CHANGED: 'Another patient was added to this conflict. Review it again.',
+    ALREADY_RESOLVED: 'Someone else resolved this conflict first.',
+    PATIENT_NOT_PLACED: 'Resolve the conflict first.',
+    NOT_PLACED: 'The patient was not in a bed, so nothing changed.',
+  } as Record<string, string>,
 };

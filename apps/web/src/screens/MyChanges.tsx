@@ -31,10 +31,11 @@ function pendingStatus(i: OutboxItem, blocked: boolean): { text: string; tone: s
 }
 
 function confirmedStatus(o: Outcome | undefined): { text: string; tone: string } {
+  if (o?.kind === 'noop' && copy.reasons[o.reason]) return { text: `✓ Confirmed, no change. ${copy.reasons[o.reason]}`, tone: 'text-text-muted' };
   if (!o || o.kind === 'applied' || o.kind === 'noop') return { text: '✓ Confirmed', tone: 'text-text-muted' };
   if (o.kind === 'held') return { text: '⚠ Conflict: a charge nurse must choose', tone: 'text-status-conflict' };
   if (o.kind === 'rejected') return { text: copy.notKept, tone: 'text-status-conflict' };
-  return { text: copy.notApplied(o.reason), tone: 'text-status-error' };
+  return { text: copy.reasons[o.reason] ? `Not applied. ${copy.reasons[o.reason]}` : copy.notApplied(o.reason), tone: 'text-status-error' };
 }
 
 /** Save unsent changes to an encrypted file (§8.4). The download is a Blob URL: no network. */

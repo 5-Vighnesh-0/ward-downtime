@@ -31,14 +31,14 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [ ] Real iPad: Home Screen install, storage behaviour (§8.2), PIN check speed, PERF on the reference tablet. Needs a device
 
 ## M4: Conflicts and export
-- [ ] Charge nurse conflict queue (FR-7)
-- [ ] Recovery export JSON + CSV (FR-11)
+- [x] Charge nurse conflict queue (FR-7), resolve and Unplaced (FR-8)
+- [ ] Recovery export JSON + CSV (FR-11), decrypt CLI, audit export, queue import (M4b)
 
 ## M5: Hardening
 - [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Done in M2b and M3b except the per-ward idle lock setting
 - [ ] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3)
 - [ ] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31)
-- [ ] Backup/restore drill, runbooks (SEC-27)
+- [ ] Backup/restore drill, runbooks (SEC-27), recovery replay from a device (design.md §11.4, moved from M4)
 - [ ] Accessibility pass
 
 ## M6: v2

@@ -72,6 +72,7 @@ export class SyncEngine {
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #applying: Promise<unknown> = Promise.resolve();
   #abort = new AbortController();
+  #wake = new AbortController();
 
   private constructor(db: WdbDb, net: Net, random: () => number, meta: Meta, key: CryptoKey, session: Session | null, confirmed: Board, outbox: OutboxItem[]) {
     this.#db = db;
@@ -128,9 +129,17 @@ export class SyncEngine {
     return () => this.#listeners.delete(fn);
   }
 
-  /** Admit with a new temporary patient ID `T-<prefix>-<n>` (§7.1). */
-  admit(payload: Omit<Payload<'ADMIT'>, 'patientId'>): Promise<OutboxItem> {
-    return this.#record('ADMIT', (m) => ({ ...payload, patientId: `T-${m.tempPrefix}-${String(m.tempCounter).padStart(4, '0')}` }));
+  /** Admit with a new temporary patient ID `T-<prefix>-<n>` (§7.1), or re-admit an unplaced patient by ID (E13). */
+  admit(payload: Omit<Payload<'ADMIT'>, 'patientId'> & { patientId?: string }): Promise<OutboxItem> {
+    const { patientId } = payload;
+    if (patientId) return this.#record('ADMIT', () => ({ ...payload, patientId }), false);
+    return this.#record('ADMIT', (m) => ({ ...payload, patientId: `T-${m.tempPrefix}-${String(m.tempCounter).padStart(4, '0')}` }), true);
+  }
+
+  /** Confirmed events by eventId, for showing who placed each conflict candidate. */
+  async eventsById(ids: readonly string[]): Promise<Map<string, AnyEvent>> {
+    const rows = await this.#db.events.where('event.eventId').anyOf([...ids]).toArray();
+    return new Map(rows.map((r) => [r.event.eventId, r.event]));
   }
 
   record<T extends Exclude<EventType, 'ADMIT'>>(type: T, payload: Payload<T>): Promise<OutboxItem> {
@@ -146,7 +155,7 @@ export class SyncEngine {
 
   // --- §5.1 local write path -------------------------------------------------------------------
 
-  async #record<T extends EventType>(type: T, build: (m: Meta) => Payload<T>): Promise<OutboxItem> {
+  async #record<T extends EventType>(type: T, build: (m: Meta) => Payload<T>, newTempId = false): Promise<OutboxItem> {
     const session = this.#session;
     if (!session) throw new Error('sign in first');
     if (!this.#meta.tempPrefix) throw new Error('device not approved yet');
@@ -158,7 +167,7 @@ export class SyncEngine {
       const cur = await this.#db.meta.get('device');
       if (!cur) throw new Error('device not enrolled');
       const h = nextHlc({ wallMs: cur.hlcWallMs, counter: cur.hlcCounter }, now);
-      const next = { ...cur, lastDeviceSeq: cur.lastDeviceSeq + 1, tempCounter: cur.tempCounter + (type === 'ADMIT' ? 1 : 0), hlcWallMs: h.wallMs, hlcCounter: h.counter };
+      const next = { ...cur, lastDeviceSeq: cur.lastDeviceSeq + 1, tempCounter: cur.tempCounter + (newTempId ? 1 : 0), hlcWallMs: h.wallMs, hlcCounter: h.counter };
       await this.#db.meta.put(next);
       return next;
     });
@@ -366,9 +375,13 @@ export class SyncEngine {
       }
       const now = this.#net.now();
       failures = [...failures.filter((t) => now - t < 60_000), now];
-      if (failures.length >= 3) {
+      if (this.#wake.signal.aborted) {
+        // The network came back (retryStream): reconnect now instead of backing off or polling.
+        this.#wake = new AbortController();
+        failures = [];
+      } else if (failures.length >= 3) {
         const until = now + SSE_RETRY_AFTER_POLLING_MS;
-        while (!signal.aborted && this.#net.now() < until) {
+        while (!signal.aborted && !this.#wake.signal.aborted && this.#net.now() < until) {
           await this.pull();
           await this.#sleep(POLL_MS);
         }
@@ -413,8 +426,15 @@ export class SyncEngine {
   #sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
       const t = setTimeout(resolve, ms);
-      this.#abort.signal.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
+      const done = () => (clearTimeout(t), resolve());
+      this.#abort.signal.addEventListener('abort', done, { once: true });
+      this.#wake.signal.addEventListener('abort', done, { once: true });
     });
+  }
+
+  /** The network is back (browser `online` event): end any backoff or polling wait and reopen the stream. */
+  retryStream(): void {
+    this.#wake.abort();
   }
 
   stop(): void {

@@ -101,6 +101,30 @@ describe('local write path and push (§5.1, §5.3)', () => {
     expect(t.engine.state.confirmed.beds.B01).toMatchObject({ status: 'occupied' });
   });
 
+  it('re-admits an unplaced patient under the same ID without using a new temp ID (E13)', async () => {
+    await setup();
+    const t = await another('charge');
+    t.net.blockPush = true;
+    const first = await t.engine.admit({ label: 'Rowan Ashby', bedId: 'B01' });
+    const other = await another();
+    await other.engine.admit({ label: 'Mira Holt', bedId: 'B01' });
+    await other.engine.push();
+    t.net.blockPush = false;
+    await t.engine.push();
+    const conflictId = Object.keys(t.engine.state.confirmed.conflicts)[0] ?? '';
+    const seen = t.engine.state.confirmed.conflicts[conflictId]?.candidates.map((c) => c.eventId) ?? [];
+    const keep = seen.find((id) => id !== first.eventId) ?? '';
+    expect((await t.engine.eventsById(seen)).size).toBe(2);
+    await t.engine.record('RESOLVE_CONFLICT', { conflictId, keep, candidatesSeen: seen });
+    await t.engine.push();
+    const { patientId } = first.event.payload as { patientId: string };
+    expect(t.engine.state.confirmed.patients[patientId]?.where).toEqual({ kind: 'unplaced' });
+    await t.engine.admit({ patientId, label: 'Rowan Ashby', bedId: 'B02' });
+    await t.engine.push();
+    expect(t.engine.state.confirmed.beds.B02).toMatchObject({ status: 'occupied', occupant: patientId });
+    expect(t.engine.device.nextPatientId.endsWith('-0002')).toBe(true); // the re-admit did not use a temp ID
+  });
+
   it('refuses input the schema would reject before signing it', async () => {
     await setup();
     const t = await another();
@@ -162,6 +186,23 @@ describe('pull, chain check and live stream (§5.6, §9.6)', () => {
     await b.engine.admit({ label: 'Rowan Ashby', bedId: 'B03' });
     await b.engine.push();
     await eventually(() => a.engine.state.confirmed.beds.B03?.status === 'occupied');
+  });
+
+  it('after an outage that switched to polling, the network coming back reopens the live stream at once', async () => {
+    await setup();
+    const a = await another();
+    const b = await another();
+    a.engine.stop();
+    const live = await SyncEngine.open(a.db, a.net, () => 0); // no backoff, so 3 failures arrive at once
+    open.push({ ...a, engine: live });
+    a.net.offline = true;
+    void live.connect();
+    await new Promise((r) => setTimeout(r, 200)); // 3 failed connects → polling every 15 s
+    a.net.offline = false;
+    live.retryStream(); // what the browser's `online` event does
+    await b.engine.admit({ label: 'Rowan Ashby', bedId: 'B03' });
+    await b.engine.push();
+    await eventually(() => live.state.confirmed.beds.B03?.status === 'occupied', 3000); // well before the next poll
   });
 
   it('pulls instead when it missed more than the stream backlog (resync)', async () => {

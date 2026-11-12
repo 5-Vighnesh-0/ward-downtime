@@ -42,7 +42,7 @@ function BedCard({ label, state, onOpen }: { label: string; state: CardState; on
   );
 }
 
-export function BoardScreen({ engine, isAdmin }: { engine: SyncEngine; isAdmin: boolean }) {
+export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine; isAdmin: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const beds = Object.entries(s.view.beds).sort(([a], [b]) => a.localeCompare(b));
@@ -57,12 +57,12 @@ export function BoardScreen({ engine, isAdmin }: { engine: SyncEngine; isAdmin: 
           </li>
         ))}
       </ul>
-      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} onClose={() => setOpen(null)} />}
+      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} onClose={() => setOpen(null)} onResolve={onResolve} />}
     </main>
   );
 }
 
-function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; onClose: () => void }) {
+function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; onClose: () => void; onResolve?: (() => void) | undefined }) {
   const bedLabel = p.board.beds[p.bedId]?.label ?? p.bedId;
   const state = cardState(p.bedId, p.board, p.confirmed);
   const [mode, setMode] = useState<'main' | 'move' | 'rename' | 'discharge'>('main');
@@ -95,6 +95,11 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
     return (
       <Sheet title={`${bedLabel}: ${copy.conflictTitle(state.count)}`} open onClose={p.onClose}>
         <p>{copy.conflictHelp}</p>
+        {p.onResolve && (
+          <Button variant="primary" wide onClick={p.onResolve}>
+            Choose who stays
+          </Button>
+        )}
       </Sheet>
     );
   if (state.kind === 'pendingOut')

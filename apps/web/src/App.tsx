@@ -5,6 +5,7 @@ import { copy } from './copy.en.ts';
 import { AdminScreen, AuditScreen } from './screens/Admin.tsx';
 import { EnrollScreen, LockScreen, SignInScreen } from './screens/Access.tsx';
 import { BoardScreen } from './screens/Board.tsx';
+import { ConflictsScreen, UnplacedScreen } from './screens/Conflicts.tsx';
 import { MyChangesScreen } from './screens/MyChanges.tsx';
 import { openDb } from './sync/db.ts';
 import { browserNet } from './sync/device.ts';
@@ -61,7 +62,7 @@ export function App() {
   );
 }
 
-type Tab = 'board' | 'changes' | 'audit' | 'admin';
+type Tab = 'board' | 'conflicts' | 'unplaced' | 'changes' | 'audit' | 'admin';
 
 function Ready({ engine }: { engine: SyncEngine }) {
   const s = useEngine(engine);
@@ -96,10 +97,11 @@ function Ready({ engine }: { engine: SyncEngine }) {
       void engine.pull();
       void engine.push();
     };
-    addEventListener('online', kick);
+    const back = () => (engine.retryStream(), kick());
+    addEventListener('online', back);
     document.addEventListener('visibilitychange', kick);
     return () => {
-      removeEventListener('online', kick);
+      removeEventListener('online', back);
       document.removeEventListener('visibilitychange', kick);
     };
   }, [engine]);
@@ -156,8 +158,12 @@ function Ready({ engine }: { engine: SyncEngine }) {
 
   const staleMin = Math.floor((Date.now() - s.lastPushAt) / 60_000);
   const stale = s.unsynced > 0 && Date.now() - s.lastPushAt > STALE_PUSH_MS;
+  const canResolve = session.role === 'charge' || session.role === 'admin';
+  const openConflicts = Object.values(s.view.conflicts).filter((c) => c.status === 'open').length;
   const tabs: [Tab, string][] = [
     ['board', 'Board'],
+    ...(canResolve ? ([['conflicts', `Conflicts (${openConflicts})`]] as [Tab, string][]) : []),
+    ['unplaced', 'Unplaced'],
     ['changes', 'My changes'],
     ...(session.role === 'charge' || session.role === 'admin' ? ([['audit', 'Audit']] as [Tab, string][]) : []),
     ...(session.role === 'admin' ? ([['admin', 'Admin']] as [Tab, string][]) : []),
@@ -214,7 +220,9 @@ function Ready({ engine }: { engine: SyncEngine }) {
           </Banner>
         )}
       </div>
-      {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} />}
+      {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
+      {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
+      {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
       {tab === 'changes' && <MyChangesScreen engine={engine} />}
       {tab === 'audit' && <AuditScreen net={net} />}
       {tab === 'admin' && <AdminScreen engine={engine} net={net} />}
