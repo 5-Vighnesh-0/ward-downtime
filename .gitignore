@@ -1,0 +1,10 @@
+node_modules/
+.turbo/
+dist/
+coverage/
+.env*
+!.env.example
+# Synthea's default output folder; raw records must never be committed
+output/
+sbom.cdx.json
+*.wdbx

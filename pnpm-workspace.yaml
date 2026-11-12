@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - apps/*
+  - tools
+
+# SEC-24 supply-chain hardening
+minimumReleaseAge: 20160 # minutes (14 days): never install a version younger than two weeks
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  # Checked 2026-11-11: published 2024-11-13 by the same maintainer as every other release, none carry provenance. Not a takeover.
+  - undici-types@6.21.0
+blockExoticSubdeps: true

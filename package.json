@@ -1,0 +1,23 @@
+{
+  "name": "ward-downtime-board",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "check:synthetic": "node tools/src/synthetic-check.ts",
+    "seed": "node tools/src/seed.ts",
+    "synthea:labels": "node tools/src/synthea-labels.ts"
+  },
+  "devDependencies": {
+    "eslint": "10.13.0",
+    "turbo": "2.11.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  }
+}
