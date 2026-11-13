@@ -55,6 +55,8 @@ export const TaskCreatedEvent = event(
   z.strictObject({ bedId, title: freeText(60), assignee: staffId.optional(), dueAt: z.iso.datetime().optional() }),
 );
 export const TaskCompletedEvent = event('TASK_COMPLETED', z.strictObject({ taskId: z.uuid() }));
+// FR-15 (v2). Tied to a bed; the reducer records who was in it, so a note never follows the bed to the next patient.
+export const HandoffNoteAddedEvent = event('HANDOFF_NOTE_ADDED', z.strictObject({ bedId, text: freeText(140) }));
 export const ResolveConflictEvent = event(
   'RESOLVE_CONFLICT',
   z.strictObject({
@@ -75,7 +77,7 @@ export function utf8Length(s: string): number {
 }
 
 export const EventSchema = z
-  .discriminatedUnion('type', [WardConfiguredEvent, AdmitEvent, DischargeEvent, TransferEvent, RenameEvent, ResolveConflictEvent, TaskCreatedEvent, TaskCompletedEvent])
+  .discriminatedUnion('type', [WardConfiguredEvent, AdmitEvent, DischargeEvent, TransferEvent, RenameEvent, ResolveConflictEvent, TaskCreatedEvent, TaskCompletedEvent, HandoffNoteAddedEvent])
   .refine((e) => utf8Length(JSON.stringify(e)) <= MAX_EVENT_BYTES, { error: `event exceeds ${MAX_EVENT_BYTES} bytes` });
 
 export type AnyEvent = z.infer<typeof EventSchema>;

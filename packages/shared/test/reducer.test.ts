@@ -383,6 +383,32 @@ describe('TASK_CREATED / TASK_COMPLETED (FR-15)', () => {
   });
 });
 
+describe('HANDOFF_NOTE_ADDED (FR-15)', () => {
+  const note = (bedId: string, text: string) => ev('HANDOFF_NOTE_ADDED', { bedId, text });
+
+  it('records the note on the bed with its writer and the occupant at that time', () => {
+    const a = admit(P1, 'B01', 1);
+    const n = note('B01', 'Family visiting at 2');
+    const b = checked(W(), a, n);
+    expect(out(b, n)).toEqual({ kind: 'applied' });
+    expect(b.notes.B01).toEqual([{ eventId: n.eventId, text: 'Family visiting at 2', by: 'S-0001', at: n.clientTime, patientId: P1 }]);
+    const empty = note('B02', 'Bed needs a new mattress');
+    expect(checked(W(), empty).notes.B02?.[0]?.patientId).toBeNull();
+  });
+
+  it('a note for an unknown bed is invalid; only the last 5 per bed are kept', () => {
+    const bad = note('B09', 'x');
+    expect(out(checked(W(), bad), bad)).toEqual({ kind: 'invalid', reason: 'UNKNOWN_BED' });
+    const many = Array.from({ length: 7 }, (_, i) => note('B01', `Note ${i}`));
+    expect(checked(W(), ...many).notes.B01?.map((x) => x.text)).toEqual(['Note 2', 'Note 3', 'Note 4', 'Note 5', 'Note 6']);
+  });
+
+  it('a removed bed takes its notes with it', () => {
+    const b = checked(W(), note('B04', 'x'), ward('B01', 'B02'));
+    expect(b.notes.B04).toBeUndefined();
+  });
+});
+
 describe('replay', () => {
   it('E5: replaying the same log (including a resolution) gives the same board', () => {
     const { a1, a2, events } = conflictOnB01();

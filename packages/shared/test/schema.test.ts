@@ -105,3 +105,15 @@ describe('v2 tasks (FR-15) and the free-text policy (SEC-16)', () => {
     }
   });
 });
+
+describe('v2 handoff notes (FR-15, SEC-16)', () => {
+  const note = (text: string) => ev('HANDOFF_NOTE_ADDED', { bedId: 'B01', text });
+  it('takes up to 140 characters of plain ward text, and nothing identifier-shaped', () => {
+    expect(ok(note('Family visiting after lunch; prefers the window side'))).toBe(true);
+    expect(ok(note('x'.repeat(140)))).toBe(true);
+    expect(ok(note('x'.repeat(141)))).toBe(false);
+    expect(ok(note(''))).toBe(false);
+    expect(ok(note(`phone ${'07700'} ${'900123'}`))).toBe(false);
+    expect(ok({ ...note('ok'), payload: { bedId: 'B01', text: 'ok', patientId: 'T-K3P-0007' } })).toBe(false);
+  });
+});

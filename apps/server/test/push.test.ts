@@ -142,6 +142,11 @@ describe('POST /api/v1/events', () => {
     ]);
   });
 
+  it('takes handoff notes from clinical staff only (FR-15, SEC-6)', async () => {
+    const note = (staffId: string) => signed(A, 'HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Family visiting at 2' }, { staffId });
+    expect(statuses(await push(A, [note('S-0001'), note('S-0002'), note('S-0003')]))).toEqual(['ROLE_FORBIDDEN', 'appended', 'appended']); // clerk, nurse, charge
+  });
+
   it('takes tasks from any role, but refuses a title that looks like an identifier (FR-15, SEC-16)', async () => {
     const ok = signed(A, 'TASK_CREATED', { bedId: 'B01', title: 'Bed needs cleaning' }, { staffId: 'S-0001' }); // clerk
     const bad = signed(A, 'TASK_CREATED', { bedId: 'B01', title: `MRN ${'1234567'}` } /* built at runtime: no MRN-shaped text in the repo */, { staffId: 'S-0002' });

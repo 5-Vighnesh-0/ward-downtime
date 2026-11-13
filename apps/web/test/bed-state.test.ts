@@ -1,7 +1,7 @@
 // Bed card states and accessible names (design.md §10.4, FR-10).
 import { describe, expect, it } from 'vitest';
 import { replay, type AnyEvent } from '@wdb/shared';
-import { cardName, cardState, FILTERS, matches, taskSummary, type CardState } from '../src/ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, notesFor, taskSummary, type CardState } from '../src/ui/bedState.ts';
 
 let n = 0;
 const ev = (type: AnyEvent['type'], payload: object, basedOn = 0): AnyEvent =>
@@ -79,5 +79,18 @@ describe('board filters', () => {
       [{ kind: 'conflict', count: 2 }, ['All', 'Conflict']],
     ];
     for (const [s, want] of states) expect(FILTERS.filter((f) => matches(f, s))).toEqual(want);
+  });
+});
+
+describe('notesFor (FR-15)', () => {
+  it('shows only notes written for the current occupant, newest first; the next patient starts clean', () => {
+    const n1 = ev('HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Family visiting at 2' });
+    const n2 = ev('HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Prefers the window side' });
+    const b = log(ward, admitA, n1, n2);
+    expect(notesFor(b, 'B01').map((n) => n.text)).toEqual(['Prefers the window side', 'Family visiting at 2']);
+    const out = log(ward, admitA, n1, ev('DISCHARGE', { patientId: 'T-K3P-0001', bedId: 'B01' }));
+    expect(notesFor(out, 'B01')).toEqual([]);
+    const next = log(ward, admitA, n1, ev('DISCHARGE', { patientId: 'T-K3P-0001', bedId: 'B01' }), ev('ADMIT', { patientId: 'T-M7Q-0001', label: 'Mira Holt', bedId: 'B01' }));
+    expect(notesFor(next, 'B01')).toEqual([]);
   });
 });

@@ -77,6 +77,10 @@ export function checkInvariants(b: Board): string[] {
   for (const [tid, t] of Object.entries(b.tasks)) {
     if (t.status === 'open' && !b.beds[t.bedId]) errs.push(`open task ${tid} on a bed that does not exist`);
   }
+  for (const [bedId, notes] of Object.entries(b.notes)) {
+    if (!b.beds[bedId]) errs.push(`notes kept for bed ${bedId}, which does not exist`);
+    if (notes.length > 5) errs.push(`bed ${bedId} keeps ${notes.length} notes`);
+  }
   for (const [cid, c] of Object.entries(b.conflicts)) {
     if (c.status === 'open') {
       const bed = b.beds[c.bedId];

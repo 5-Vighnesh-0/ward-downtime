@@ -46,7 +46,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 
 ## M6: v2
 - [x] Tasks tied to beds (FR-15), with the OQ-8 free-text policy (M6a)
-- [ ] Shift handoff notes (FR-15)
+- [x] Shift handoff notes (FR-15), shown only for the patient they were written for (M6b)
 
 ## Before going public
 - [ ] LICENSE, SECURITY.md, CONTRIBUTING.md

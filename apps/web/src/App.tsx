@@ -1,5 +1,6 @@
 // App shell (design.md §10.2): device setup → sign-in → board, with idle lock, banners and update prompt.
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ALLOWED_ROLES } from '@wdb/shared';
 import { registerSW } from 'virtual:pwa-register';
 import { copy } from './copy.en.ts';
 import { AdminScreen, AuditScreen } from './screens/Admin.tsx';
@@ -251,7 +252,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
           </Banner>
         )}
       </div>
-      {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
+      {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
       {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
       {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
       {tab === 'changes' && <MyChangesScreen engine={engine} />}

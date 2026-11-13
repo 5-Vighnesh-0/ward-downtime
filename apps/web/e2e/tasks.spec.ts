@@ -1,6 +1,6 @@
-// FR-15 tasks tied to beds (design.md §14 M6a): add, overdue, the SEC-16 text guard, and two offline completions.
+// FR-15 (design.md §14 M6): tasks tied to beds (add, overdue, the SEC-16 text guard, two offline completions) and handoff notes.
 import { expect, test, type Page } from '@playwright/test';
-import { owner, reconnect, resetDb, startApi, stopApi, twoTablets } from './support.ts';
+import { admit, owner, reconnect, resetDb, setUpTablet, startApi, stopApi, twoTablets } from './support.ts';
 
 test.beforeEach(async () => {
   await stopApi();
@@ -50,4 +50,30 @@ test('a task added on one tablet shows overdue on both; two offline completions 
   expect(rows[0].n).toBe(2); // both are in the log; the second changes nothing
   await a.context().close();
   await b.context().close();
+});
+
+test('a handoff note reaches the next tablet, is gone for the next patient, and clerks cannot write one (FR-15)', async ({ browser }) => {
+  const { a, b } = await twoTablets(browser);
+  await admit(a, 1, 'Rowan Ashby');
+  await a.getByRole('button', { name: /^Bed 1, Rowan Ashby, / }).click();
+  await a.getByLabel('New handoff note').fill('Family visiting after lunch');
+  await a.getByRole('button', { name: 'Add note' }).click();
+  await expect(a.getByText('Family visiting after lunch')).toBeVisible();
+  await a.keyboard.press('Escape');
+
+  await b.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' }).click({ timeout: 20_000 });
+  await expect(b.getByText('Family visiting after lunch')).toBeVisible();
+  await b.getByRole('button', { name: 'Discharge' }).click();
+  await b.getByRole('dialog').getByRole('button', { name: 'Discharge' }).click();
+  await expect(b.getByRole('button', { name: 'Bed 1, empty' })).toBeVisible({ timeout: 20_000 });
+  await admit(b, 1, 'Mira Holt');
+  await b.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click();
+  await expect(b.getByText('No handoff notes for this bed.')).toBeVisible();
+
+  const c = await (await browser.newContext()).newPage();
+  await setUpTablet(c, 'clerk', 'Tablet C');
+  await c.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click({ timeout: 20_000 });
+  await expect(c.getByRole('heading', { name: 'Handoff notes' })).toBeVisible();
+  await expect(c.getByLabel('New handoff note')).toHaveCount(0);
+  for (const p of [a, b, c]) await p.context().close();
 });

@@ -25,6 +25,8 @@ function describe(e: AnyEvent): string {
       return `Task on ${e.payload.bedId}: ${e.payload.title}`;
     case 'TASK_COMPLETED':
       return 'Task done';
+    case 'HANDOFF_NOTE_ADDED':
+      return `Handoff note on ${e.payload.bedId}: ${e.payload.text}`;
   }
 }
 

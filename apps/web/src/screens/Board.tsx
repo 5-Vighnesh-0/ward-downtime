@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { looksLikeIdentifier, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, FILTERS, matches, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'], string> = {
@@ -68,7 +68,7 @@ function BedCard({ label, state, tasks, onOpen }: { label: string; state: CardSt
   );
 }
 
-export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine; isAdmin: boolean; onResolve?: (() => void) | undefined }) {
+export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: SyncEngine; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');
@@ -98,18 +98,23 @@ export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine
           </li>
         ))}
       </ul>
-      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} onClose={() => setOpen(null)} onResolve={onResolve} />}
+      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={() => setOpen(null)} onResolve={onResolve} />}
     </main>
   );
 }
 
-function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; onClose: () => void; onResolve?: (() => void) | undefined }) {
+function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean; onClose: () => void; onResolve?: (() => void) | undefined }) {
   const bedLabel = p.board.beds[p.bedId]?.label ?? p.bedId;
   const state = cardState(p.bedId, p.board, p.confirmed);
   const [mode, setMode] = useState<'main' | 'move' | 'rename' | 'discharge'>('main');
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string>();
-  const tasks = <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} />;
+  const extras = (
+    <>
+      <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} />
+      <BedNotes engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />
+    </>
+  );
   const act = async (f: () => Promise<unknown>) => {
     try {
       await f();
@@ -131,7 +136,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
             Admit to {bedLabel.toLowerCase()}
           </Button>
         </form>
-        {tasks}
+        {extras}
       </Sheet>
     );
   if (state.kind === 'conflict')
@@ -143,14 +148,14 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
             Choose who stays
           </Button>
         )}
-        {tasks}
+        {extras}
       </Sheet>
     );
   if (state.kind === 'pendingOut')
     return (
       <Sheet title={bedLabel} open onClose={p.onClose}>
         <p>{state.label} has a pending move or discharge. It shows as confirmed once the ward server has it.</p>
-        {tasks}
+        {extras}
       </Sheet>
     );
 
@@ -219,7 +224,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         </div>
       )}
-      {tasks}
+      {extras}
     </Sheet>
   );
 }
@@ -302,6 +307,58 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           Add task
         </Button>
       </form>
+    </section>
+  );
+}
+
+/** FR-15 handoff notes for whoever is in the bed now. Same SEC-16 free-text policy as tasks. */
+function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string>();
+  const notes = notesFor(p.board, p.bedId);
+  const confirmed = new Set(notesFor(p.confirmed, p.bedId).map((n) => n.eventId));
+  const t = text.trim();
+  const textError = t && looksLikeIdentifier(t) ? copy.noIdentifiers : undefined;
+  return (
+    <section aria-labelledby={`notes-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+      <h3 id={`notes-${p.bedId}`} className="text-lg font-semibold">
+        Handoff notes
+      </h3>
+      {notes.length === 0 ? (
+        <p className="text-text-muted">No handoff notes for this bed.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {notes.map((n) => (
+            <li key={n.eventId}>
+              <p>{n.text}</p>
+              <p className="text-text-muted">
+                {n.by}, {timeOf(n.at)}
+                {!confirmed.has(n.eventId) && <span className="text-status-pending"> · Pending</span>}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {p.canNote && (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              setError(undefined);
+              await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
+              setText('');
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        >
+          <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} />
+          <Button type="submit" disabled={!t || !!textError}>
+            Add note
+          </Button>
+        </form>
+      )}
     </section>
   );
 }

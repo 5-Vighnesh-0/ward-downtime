@@ -1,5 +1,5 @@
 // What one bed card shows (design.md §10.4): the optimistic view compared with the confirmed board.
-import type { Board } from '@wdb/shared';
+import type { Board, Note } from '@wdb/shared';
 
 export type CardState =
   | { kind: 'empty' }
@@ -66,4 +66,11 @@ export function matches(f: Filter, s: CardState): boolean {
     case 'Pending':
       return (s.kind === 'occupied' && s.pending) || s.kind === 'pendingOut';
   }
+}
+
+/** Handoff notes written for whoever is in the bed now (none when empty means notes written while it was empty), newest first. */
+export function notesFor(view: Board, bedId: string): Note[] {
+  const bed = view.beds[bedId];
+  const occupant = bed?.status === 'occupied' ? bed.occupant : null;
+  return (view.notes?.[bedId] ?? []).filter((n) => n.patientId === occupant).reverse();
 }

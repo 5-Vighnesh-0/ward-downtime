@@ -14,4 +14,5 @@ export const ALLOWED_ROLES: Record<EventType, readonly Role[]> = {
   RESOLVE_CONFLICT: ['charge', 'admin'],
   TASK_CREATED: ALL,
   TASK_COMPLETED: ALL,
+  HANDOFF_NOTE_ADDED: ['nurse', 'charge', 'admin'], // handoff is between clinical staff
 };

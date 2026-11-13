@@ -61,6 +61,10 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
       const t = pick(sorted(v.tasks), a);
       return t ? ev('TASK_COMPLETED', { taskId: t[0] }, opts) : undefined;
     }
+    case 8: {
+      const bedId = pick(sorted(v.beds).map(([k]) => k), a);
+      return bedId ? ev('HANDOFF_NOTE_ADDED', { bedId, text: `Note ${a}` }, opts) : undefined;
+    }
     default: {
       if (!d.isCharge) return undefined;
       const c = pick(sorted(v.conflicts).filter(([, x]) => x.status === 'open'), a);
@@ -72,7 +76,7 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
   }
 }
 
-const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(12), a: fc.nat(1000), b: fc.nat(1000) });
+const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(13), a: fc.nat(1000), b: fc.nat(1000) });
 let conflictsSeen = 0;
 let doubleDone = 0;
 
@@ -111,8 +115,9 @@ describe('PB-01 / PB-03: offline devices converge', () => {
           const d = devices[di];
           if (!d) continue;
           if (k <= 6 || k >= 11) {
+            // 13 adds handoff notes.
             // 11 and 12 add weight to tasks (create, complete), so double completions show up in short runs.
-            const e = makeChange(d, k === 4 ? 7 : k === 11 ? 5 : k === 12 ? 6 : k, a, b);
+            const e = makeChange(d, k === 4 ? 7 : k === 11 ? 5 : k === 12 ? 6 : k === 13 ? 8 : k, a, b);
             if (e) {
               d.outbox.push(e);
               created.add(e.eventId);

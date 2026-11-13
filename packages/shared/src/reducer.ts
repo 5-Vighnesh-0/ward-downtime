@@ -47,6 +47,17 @@ export interface Task {
   doneBy: string | null;
 }
 
+/** FR-15 handoff note. `at` is the writer's clientTime: display only (SEC-12). */
+export interface Note {
+  eventId: string;
+  text: string;
+  by: string;
+  at: string;
+  patientId: string | null; // occupant when written; a different occupant does not see it
+}
+
+const NOTES_PER_BED = 5;
+
 export type NoopReason = 'NOT_PLACED' | 'SAME_BED' | 'UNKNOWN_PATIENT' | 'ALREADY_RESOLVED' | 'UNKNOWN_TASK' | 'ALREADY_DONE';
 export type InvalidReason =
   | 'UNKNOWN_BED'
@@ -72,10 +83,11 @@ export interface Board {
   conflicts: Record<string, Conflict>;
   outcomes: Record<string, Outcome>;
   tasks: Record<string, Task>;
+  notes: Record<string, Note[]>; // by bedId, oldest first, last NOTES_PER_BED only
   idleLockMinutes?: number; // unset until a WARD_CONFIGURED sets it; tablets then use 5 (SEC-7)
 }
 
-export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conflicts: {}, outcomes: {}, tasks: {} });
+export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conflicts: {}, outcomes: {}, tasks: {}, notes: {} });
 
 /** Apply entries in order on top of `from`. `from` is never mutated. */
 export function replay(entries: Iterable<Ordered>, from: Board = emptyBoard()): Board {
@@ -87,6 +99,7 @@ export function replay(entries: Iterable<Ordered>, from: Board = emptyBoard()): 
     conflicts: { ...from.conflicts },
     outcomes: { ...from.outcomes },
     tasks: { ...from.tasks }, // a snapshot saved before v2 has none
+    notes: { ...from.notes },
   };
   for (const entry of entries) apply(b, entry);
   return b;
@@ -133,6 +146,13 @@ function outcomeOf(b: Board, seq: number, e: AnyEvent): Outcome {
       b.tasks[e.payload.taskId] = { ...t, status: 'done', doneBy: e.staffId };
       return APPLIED;
     }
+    case 'HANDOFF_NOTE_ADDED': {
+      const bed = b.beds[e.payload.bedId];
+      if (!bed) return { kind: 'invalid', reason: 'UNKNOWN_BED' };
+      const note: Note = { eventId: e.eventId, text: e.payload.text, by: e.staffId, at: e.clientTime, patientId: bed.status === 'occupied' ? bed.occupant : null };
+      b.notes[e.payload.bedId] = [...(b.notes[e.payload.bedId] ?? []), note].slice(-NOTES_PER_BED);
+      return APPLIED;
+    }
   }
 }
 
@@ -148,6 +168,7 @@ function configure(b: Board, { beds, idleLockMinutes }: { beds: { bedId: string;
     next[bedId] = old ? { ...old, label } : { label, status: 'empty' };
   }
   b.beds = next;
+  for (const id of Object.keys(b.notes)) if (!keep.has(id)) delete b.notes[id];
   if (idleLockMinutes !== undefined) b.idleLockMinutes = idleLockMinutes;
   return APPLIED;
 }
