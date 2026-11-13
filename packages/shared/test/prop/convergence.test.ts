@@ -65,6 +65,12 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
       const bedId = pick(sorted(v.beds).map(([k]) => k), a);
       return bedId ? ev('HANDOFF_NOTE_ADDED', { bedId, text: `Note ${a}` }, opts) : undefined;
     }
+    case 9: {
+      // The admin screen sets beds B01..Bn; fewer beds than now removes some (refused while in use).
+      if (!d.isCharge) return undefined;
+      const n = 1 + (a % 7);
+      return ev('WARD_CONFIGURED', { beds: Array.from({ length: n }, (_, i) => ({ bedId: `B0${i + 1}`, label: `${b % 2 ? 'Bay' : 'Bed'} ${i + 1}` })) }, opts);
+    }
     default: {
       if (!d.isCharge) return undefined;
       const c = pick(sorted(v.conflicts).filter(([, x]) => x.status === 'open'), a);
@@ -76,9 +82,13 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
   }
 }
 
-const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(13), a: fc.nat(1000), b: fc.nat(1000) });
+// Step k → the change makeChange builds; any other k is a push (7, 8) or a pull (9 partial, 10 full).
+// Tasks (5, 6) appear twice so double completions show up in short runs.
+const CHANGE: Record<number, number> = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 7, 5: 5, 6: 6, 11: 5, 12: 6, 13: 8, 14: 9 };
+const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(14), a: fc.nat(1000), b: fc.nat(1000) });
 let conflictsSeen = 0;
 let doubleDone = 0;
+let bedsRemoved = 0;
 
 describe('PB-01 / PB-03: offline devices converge', () => {
   it('every device ends with the board a full replay of the server log produces', () => {
@@ -114,10 +124,9 @@ describe('PB-01 / PB-03: offline devices converge', () => {
         for (const { d: di, k, a, b } of steps) {
           const d = devices[di];
           if (!d) continue;
-          if (k <= 6 || k >= 11) {
-            // 13 adds handoff notes.
-            // 11 and 12 add weight to tasks (create, complete), so double completions show up in short runs.
-            const e = makeChange(d, k === 4 ? 7 : k === 11 ? 5 : k === 12 ? 6 : k === 13 ? 8 : k, a, b);
+          const kind = CHANGE[k];
+          if (kind !== undefined) {
+            const e = makeChange(d, kind, a, b);
             if (e) {
               d.outbox.push(e);
               created.add(e.eventId);
@@ -144,10 +153,12 @@ describe('PB-01 / PB-03: offline devices converge', () => {
           expect(checkInvariants(b)).toEqual([]);
         }
         conflictsSeen += Object.keys(full.conflicts).length;
+        bedsRemoved += log.filter((x, i) => i > 0 && x.event.type === 'WARD_CONFIGURED' && full.outcomes[x.event.eventId]?.kind === 'applied' && x.event.payload.beds.length < 5).length;
         doubleDone += Object.values(full.outcomes).filter((o) => o.kind === 'noop' && o.reason === 'ALREADY_DONE').length;
       }),
     );
     expect(conflictsSeen).toBeGreaterThan(0); // the generator really produces concurrency
     expect(doubleDone).toBeGreaterThan(0); // and tasks completed twice
+    expect(bedsRemoved).toBeGreaterThan(0); // and the ward shrinking under live beds, tasks and notes
   });
 });
