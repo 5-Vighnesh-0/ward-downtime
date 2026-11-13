@@ -1,9 +1,9 @@
 // Bed grid and bed sheet (design.md §10.3, §10.4; FR-1, FR-2, FR-10). No drag and drop anywhere (WCAG 2.5.7).
-import { useState } from 'react';
-import type { Board } from '@wdb/shared';
+import { useEffect, useState } from 'react';
+import { looksLikeIdentifier, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, FILTERS, matches, type CardState, type Filter } from '../ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'], string> = {
@@ -13,13 +13,24 @@ const cardStyle: Record<CardState['kind'], string> = {
   pendingOut: 'border-2 border-dashed border-status-pending',
 };
 
-function BedCard({ label, state, onOpen }: { label: string; state: CardState; onOpen: () => void }) {
+/** Re-renders every 30 s, so tasks turn overdue without a tap. */
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
+function BedCard({ label, state, tasks, onOpen }: { label: string; state: CardState; tasks: TaskSummary; onOpen: () => void }) {
   const pending = (state.kind === 'occupied' && state.pending) || state.kind === 'pendingOut';
+  const words = taskWords(tasks);
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={cardName(label, state)}
+      aria-label={cardName(label, state, tasks)}
       className={`flex min-h-28 flex-col items-start gap-1 rounded-lg p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-dashed' : ''}`}
     >
       {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
@@ -32,6 +43,19 @@ function BedCard({ label, state, onOpen }: { label: string; state: CardState; on
         <span className="font-semibold text-status-conflict">
           <span aria-hidden="true">⚠ </span>
           {copy.conflictTitle(state.count)}
+        </span>
+      )}
+      {words.length > 0 && ' '}
+      {words.length > 0 && (
+        <span className={tasks.overdue ? 'font-semibold text-status-error' : 'text-text-muted'}>
+          {words[0]}
+          {words[1] && (
+            <>
+              {' '}
+              <span aria-hidden="true">· </span>
+              {words[1]}
+            </>
+          )}
         </span>
       )}
       {pending && ' '}
@@ -48,9 +72,10 @@ export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');
+  const now = useNow();
   const beds = Object.entries(s.view.beds)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed) }));
+    .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now) }));
   const shown = beds.filter((b) => matches(filter, b.state));
   return (
     <main className="flex flex-col gap-4 p-4">
@@ -69,7 +94,7 @@ export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine
       <ul className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
         {shown.map((b) => (
           <li key={b.id} className="grid">
-            <BedCard label={b.label} state={b.state} onOpen={() => setOpen(b.id)} />
+            <BedCard label={b.label} state={b.state} tasks={b.tasks} onOpen={() => setOpen(b.id)} />
           </li>
         ))}
       </ul>
@@ -84,6 +109,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
   const [mode, setMode] = useState<'main' | 'move' | 'rename' | 'discharge'>('main');
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string>();
+  const tasks = <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} />;
   const act = async (f: () => Promise<unknown>) => {
     try {
       await f();
@@ -105,6 +131,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
             Admit to {bedLabel.toLowerCase()}
           </Button>
         </form>
+        {tasks}
       </Sheet>
     );
   if (state.kind === 'conflict')
@@ -116,12 +143,14 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
             Choose who stays
           </Button>
         )}
+        {tasks}
       </Sheet>
     );
   if (state.kind === 'pendingOut')
     return (
       <Sheet title={bedLabel} open onClose={p.onClose}>
         <p>{state.label} has a pending move or discharge. It shows as confirmed once the ward server has it.</p>
+        {tasks}
       </Sheet>
     );
 
@@ -190,6 +219,89 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         </div>
       )}
+      {tasks}
     </Sheet>
+  );
+}
+
+/** Next time of day `hh:mm` on this tablet's clock; one up to an hour ago still counts as today (already late). */
+function dueAtFrom(hhmm: string, now = new Date()): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(now);
+  d.setHours(h ?? 0, m ?? 0, 0, 0);
+  if (d.getTime() < now.getTime() - 3_600_000) d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
+const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/** FR-15 tasks on this bed. Free text follows the SEC-16 policy: short, no clinical or personal details. */
+function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string }) {
+  const [title, setTitle] = useState('');
+  const [due, setDue] = useState('');
+  const [assignee, setAssignee] = useState('');
+  const [error, setError] = useState<string>();
+  const now = useNow();
+  const open = Object.entries(p.board.tasks ?? {}).filter(([, t]) => t.bedId === p.bedId && t.status === 'open');
+  const t = title.trim();
+  const titleError = t && looksLikeIdentifier(t) ? copy.noIdentifiers : undefined;
+  const assigneeOk = assignee === '' || /^S-[0-9]{4}$/.test(assignee);
+  const run = async (f: () => Promise<unknown>) => {
+    try {
+      setError(undefined);
+      await f();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  };
+  return (
+    <section aria-labelledby={`tasks-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+      <h3 id={`tasks-${p.bedId}`} className="text-lg font-semibold">
+        Tasks
+      </h3>
+      {open.length === 0 && <p className="text-text-muted">No open tasks for this bed.</p>}
+      <ul className="flex flex-col gap-2">
+        {open.map(([id, task]) => {
+          const overdue = task.dueAt !== null && Date.parse(task.dueAt) < now;
+          const pending = p.confirmed.tasks?.[id]?.status !== 'open';
+          return (
+            <li key={id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                <span className="font-semibold">{task.title}</span>
+                {task.assignee && ` · for ${task.assignee}`}
+                {task.dueAt && <span className={overdue ? 'font-semibold text-status-error' : ''}>{` · ${overdue ? 'overdue since' : 'due'} ${timeOf(task.dueAt)}`}</span>}
+                {pending && <span className="text-status-pending"> · Pending</span>}
+              </span>
+              <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
+                Done
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
+          if (await run(() => p.engine.record('TASK_CREATED', payload))) {
+            setTitle('');
+            setDue('');
+            setAssignee('');
+          }
+        }}
+      >
+        <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} />
+        <div className="flex flex-wrap gap-3">
+          <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
+          <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
+        </div>
+        <Button type="submit" disabled={!t || !!titleError || !assigneeOk}>
+          Add task
+        </Button>
+      </form>
+    </section>
   );
 }

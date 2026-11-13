@@ -1,6 +1,6 @@
 // UNIT-SCHEMA (FR-3, SEC-11, SEC-16)
 import { describe, expect, it } from 'vitest';
-import { EventSchema, utf8Length } from '../src/index.ts';
+import { EventSchema, looksLikeIdentifier, utf8Length } from '../src/index.ts';
 import { ev, ward } from './helpers.ts';
 
 const admit = () => ev('ADMIT', { patientId: 'T-K3P-0007', label: 'Rowan Ashby', bedId: 'B04' });
@@ -74,5 +74,34 @@ describe('EventSchema', () => {
 
   it('counts multi-byte characters as UTF-8 bytes', () => {
     expect(utf8Length('aé€😀')).toBe(1 + 2 + 3 + 4);
+  });
+});
+
+describe('v2 tasks (FR-15) and the free-text policy (SEC-16)', () => {
+  const task = (payload: object) => ev('TASK_CREATED', payload as never);
+  it('accepts a short task with optional assignee and due time', () => {
+    expect(ok(task({ bedId: 'B01', title: 'Bed needs cleaning' }))).toBe(true);
+    expect(ok(task({ bedId: 'B01', title: 'Call porter', assignee: 'S-0002', dueAt: '2026-11-12T14:00:00.000Z' }))).toBe(true);
+    expect(ok(ev('TASK_COMPLETED', { taskId: admit().eventId }))).toBe(true);
+  });
+
+  it('bounds the title and refuses unknown fields', () => {
+    expect(ok(task({ bedId: 'B01', title: 'x'.repeat(60) }))).toBe(true);
+    expect(ok(task({ bedId: 'B01', title: 'x'.repeat(61) }))).toBe(false);
+    expect(ok(task({ bedId: 'B01', title: '' }))).toBe(false);
+    expect(ok(task({ bedId: 'B01', title: 'ok', notes: 'more' }))).toBe(false);
+    expect(ok(task({ bedId: 'B01', title: 'ok', assignee: 'nurse1' }))).toBe(false);
+    expect(ok(ev('TASK_COMPLETED', { taskId: 'K-1' }))).toBe(false);
+  });
+
+  it('refuses text that looks like an identifier', () => {
+    // Identifier-shaped samples are built at runtime, so the repo's synthetic-data check (SEC-17) sees none.
+    for (const bad of [`SSN ${['123', '45', '6789'].join('-')}`, `MRN ${'1234567'}`, `mrn#${'998877'}`, 'mail jo@example.org', 'DOB 3/4/1950', 'born 1950-03-04', 'call 555 123 4567', 'date of birth check', 'birthdate']) {
+      expect(looksLikeIdentifier(bad), bad).toBe(true);
+      expect(ok(task({ bedId: 'B01', title: bad })), bad).toBe(false);
+    }
+    for (const fine of ['Bed needs cleaning', 'Porter at 14:30', 'Family visiting 2 pm', 'Move to bay 3', 'Check 2 bags']) {
+      expect(looksLikeIdentifier(fine), fine).toBe(false);
+    }
   });
 });

@@ -36,6 +36,7 @@ export function buildRecoveryExport(entries: readonly LedgerLike[], o: ExportOpt
   const rows = [];
   for (const { serverSeq, serverTime, event: e } of entries) {
     if (e.type === 'WARD_CONFIGURED' || e.type === 'RESOLVE_CONFLICT') continue; // their effect shows in the kept placements
+    if (e.type === 'TASK_CREATED' || e.type === 'TASK_COMPLETED') continue; // ward work, not patient movements for the EHR
     const outcome = board.outcomes[e.eventId]?.kind;
     if (e.type === 'ADMIT' && (outcome === 'applied' || outcome === 'held' || outcome === 'rejected')) labels.set(e.payload.patientId, e.payload.label);
     if (e.type === 'RENAME' && outcome === 'applied') labels.set(e.payload.patientId, e.payload.label);

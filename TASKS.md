@@ -45,7 +45,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [ ] Nightly random-seed property runs (PB-01 at 20,000) and SIM-01/02 as named simulations
 
 ## M6: v2
-- [ ] Tasks tied to beds (FR-15)
+- [x] Tasks tied to beds (FR-15), with the OQ-8 free-text policy (M6a)
 - [ ] Shift handoff notes (FR-15)
 
 ## Before going public

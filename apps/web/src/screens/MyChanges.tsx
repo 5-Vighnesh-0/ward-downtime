@@ -21,6 +21,10 @@ function describe(e: AnyEvent): string {
       return `Resolve ${e.payload.conflictId}`;
     case 'WARD_CONFIGURED':
       return `Set up ${e.payload.beds.length} beds${e.payload.idleLockMinutes ? `, lock after ${e.payload.idleLockMinutes} min` : ''}`;
+    case 'TASK_CREATED':
+      return `Task on ${e.payload.bedId}: ${e.payload.title}`;
+    case 'TASK_COMPLETED':
+      return 'Task done';
   }
 }
 

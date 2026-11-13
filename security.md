@@ -57,7 +57,7 @@ Use STRIDE per component (client, sync API, server, database, export, deploy) an
 - SEC-15: Recovery exports are encrypted with a passphrase or key by default and labelled with a classification banner.
 
 ### 4.5 Data minimization and synthetic data
-- SEC-16: The board stores a name label and a temporary ID only. No diagnosis, MRN, DOB or notes in v1.
+- SEC-16: The board stores a name label and a temporary ID only. No diagnosis, MRN, DOB or notes in v1. v2 (FR-15) adds short free text for task titles (60 characters) and handoff notes (140), for ward work only: the form warns against clinical and personal details, and the tablet and server refuse text that looks like an identifier (MRN, SSN, DOB, dates, email addresses, long numbers).
 - SEC-17: Seed data comes from generators (e.g. Synthea, faker). A CI check blocks files that look like real identifiers (SSN, MRN patterns, real-looking emails).
 
 ### 4.6 Audit and logging
@@ -88,6 +88,7 @@ Use STRIDE per component (client, sync API, server, database, export, deploy) an
 - Offline credentials weaken revocation until the device next syncs.
 - A compromised device with a valid key can still submit valid-looking events until revoked; the audit trail and charge-nurse review are the control.
 - Local CA setup mistakes can break the secure context and disable offline features.
+- v2 free text: the identifier check cannot stop someone typing clinical details or names in plain words. The warning on the form and staff training are the control.
 
 ## 6. Verification checklist
 

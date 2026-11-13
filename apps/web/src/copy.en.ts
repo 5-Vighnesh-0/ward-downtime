@@ -18,6 +18,8 @@ export const copy = {
   signedOut: 'Your session ended. Sign in again to send changes.',
   installHome: 'On iPad, add this app to the Home Screen first, then open it from there.',
   updateReady: 'Update ready. It will install when all changes are sent.',
+  noClinical: 'Ward work only. No clinical details, diagnoses, dates of birth, phone numbers or IDs.',
+  noIdentifiers: 'This looks like an ID, date of birth, phone number or email. Leave personal and clinical details out.',
   idleWarning: 'Locking in 30 seconds because no one has used this tablet.',
   conflictTitle: (n: number) => `Conflict: ${n} patients`,
   conflictHelp: 'A charge nurse must choose who stays in this bed.',

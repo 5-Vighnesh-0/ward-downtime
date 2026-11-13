@@ -83,7 +83,11 @@ export function Field(p: { label: string; value: string; onChange: (v: string) =
       <label htmlFor={id} className="font-semibold">
         {p.label}
       </label>
-      {p.hint && <p className="text-text-muted">{p.hint}</p>}
+      {p.hint && (
+        <p id={`${id}-hint`} className="text-text-muted">
+          {p.hint}
+        </p>
+      )}
       <input
         id={id}
         type={p.type ?? 'text'}
@@ -93,7 +97,7 @@ export function Field(p: { label: string; value: string; onChange: (v: string) =
         inputMode={p.inputMode}
         maxLength={p.maxLength}
         aria-invalid={p.error ? true : undefined}
-        aria-describedby={p.error ? `${id}-err` : undefined}
+        aria-describedby={[p.hint && `${id}-hint`, p.error && `${id}-err`].filter(Boolean).join(' ') || undefined}
         onChange={(e) => p.onChange(e.target.value)}
         className="min-h-12 rounded-lg border-2 border-border px-3 text-lg"
       />

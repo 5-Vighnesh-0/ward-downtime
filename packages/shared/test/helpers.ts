@@ -74,6 +74,9 @@ export function checkInvariants(b: Board): string[] {
       if (c?.status !== 'open' || !c.candidates.some((x) => x.patientId === pid)) errs.push(`patient ${pid} held outside an open conflict`);
     }
   }
+  for (const [tid, t] of Object.entries(b.tasks)) {
+    if (t.status === 'open' && !b.beds[t.bedId]) errs.push(`open task ${tid} on a bed that does not exist`);
+  }
   for (const [cid, c] of Object.entries(b.conflicts)) {
     if (c.status === 'open') {
       const bed = b.beds[c.bedId];

@@ -142,6 +142,13 @@ describe('POST /api/v1/events', () => {
     ]);
   });
 
+  it('takes tasks from any role, but refuses a title that looks like an identifier (FR-15, SEC-16)', async () => {
+    const ok = signed(A, 'TASK_CREATED', { bedId: 'B01', title: 'Bed needs cleaning' }, { staffId: 'S-0001' }); // clerk
+    const bad = signed(A, 'TASK_CREATED', { bedId: 'B01', title: `MRN ${'1234567'}` } /* built at runtime: no MRN-shaped text in the repo */, { staffId: 'S-0002' });
+    const doneIt = signed(A, 'TASK_COMPLETED', { taskId: ok.eventId }, { staffId: 'S-0002' }); // nurse
+    expect(statuses(await push(A, [ok, bad, doneIt]))).toEqual(['appended', 'SCHEMA_INVALID', 'appended']);
+  });
+
   it('needs a session on the same, active device before reading events', async () => {
     const pending = await addDevice(pool, 'pending');
     const revoked = await addDevice(pool, 'revoked');

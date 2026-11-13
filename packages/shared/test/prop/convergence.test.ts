@@ -52,6 +52,15 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
       const p = pick(sorted(v.patients), a);
       return p ? ev('RENAME', { patientId: p[0], label: `R${b}` }, opts) : undefined;
     }
+    case 5: {
+      const bedId = pick(sorted(v.beds).map(([k]) => k), a);
+      return bedId ? ev('TASK_CREATED', { bedId, title: `Task ${a}` }, opts) : undefined;
+    }
+    case 6: {
+      // Any task, done or not: two devices completing the same one offline must also converge.
+      const t = pick(sorted(v.tasks), a);
+      return t ? ev('TASK_COMPLETED', { taskId: t[0] }, opts) : undefined;
+    }
     default: {
       if (!d.isCharge) return undefined;
       const c = pick(sorted(v.conflicts).filter(([, x]) => x.status === 'open'), a);
@@ -63,8 +72,9 @@ function makeChange(d: Device, kind: number, a: number, b: number): AnyEvent | u
   }
 }
 
-const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(8), a: fc.nat(1000), b: fc.nat(1000) });
+const step = fc.record({ d: fc.nat(DEVICES - 1), k: fc.nat(12), a: fc.nat(1000), b: fc.nat(1000) });
 let conflictsSeen = 0;
+let doubleDone = 0;
 
 describe('PB-01 / PB-03: offline devices converge', () => {
   it('every device ends with the board a full replay of the server log produces', () => {
@@ -100,14 +110,15 @@ describe('PB-01 / PB-03: offline devices converge', () => {
         for (const { d: di, k, a, b } of steps) {
           const d = devices[di];
           if (!d) continue;
-          if (k <= 4) {
-            const e = makeChange(d, k, a, b);
+          if (k <= 6 || k >= 11) {
+            // 11 and 12 add weight to tasks (create, complete), so double completions show up in short runs.
+            const e = makeChange(d, k === 4 ? 7 : k === 11 ? 5 : k === 12 ? 6 : k, a, b);
             if (e) {
               d.outbox.push(e);
               created.add(e.eventId);
             }
-          } else if (k <= 6) push(d); // 6 also covers retries: already-sent events are skipped
-          else pull(d, k === 7 ? 1 + (a % 5) : Infinity);
+          } else if (k <= 8) push(d); // 8 also covers retries: already-sent events are skipped
+          else pull(d, k === 9 ? 1 + (a % 5) : Infinity);
         }
 
         devices.forEach(push);
@@ -128,8 +139,10 @@ describe('PB-01 / PB-03: offline devices converge', () => {
           expect(checkInvariants(b)).toEqual([]);
         }
         conflictsSeen += Object.keys(full.conflicts).length;
+        doubleDone += Object.values(full.outcomes).filter((o) => o.kind === 'noop' && o.reason === 'ALREADY_DONE').length;
       }),
     );
     expect(conflictsSeen).toBeGreaterThan(0); // the generator really produces concurrency
+    expect(doubleDone).toBeGreaterThan(0); // and tasks completed twice
   });
 });

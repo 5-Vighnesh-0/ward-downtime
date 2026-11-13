@@ -8,13 +8,27 @@ const bedId = z.string().regex(/^B[0-9]{2}$/);
 // No control characters: they break display, and Postgres jsonb rejects NUL outright.
 const noControl = /^[^\u0000-\u001f\u007f]*$/;
 const label = z.string().min(1).max(40).regex(noControl);
+const staffId = z.string().regex(/^S-[0-9]{4}$/);
+
+// v2 free text (tasks, handoff notes): SEC-16 policy from OQ-8. Short, and nothing that looks like an identifier,
+// so a task or note cannot carry an SSN, MRN, date of birth, phone number or email address.
+const IDENTIFIER_LIKE = [
+  /\b(mrn|ssn|dob|nhs)\b/i,
+  /\b(date\s*of\s*birth|birth\s*date)\b/i,
+  /@/,
+  /\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/, // 3/4/1950
+  /(?:\d[\s./-]?){7,}/, // 7+ digits, with or without separators: phone numbers, IDs, 1950-03-04
+];
+export const looksLikeIdentifier = (s: string): boolean => IDENTIFIER_LIKE.some((re) => re.test(s));
+const freeText = (max: number) =>
+  z.string().min(1).max(max).regex(noControl).refine((s) => !looksLikeIdentifier(s), { error: 'looks like an identifier; keep clinical and personal details out' });
 
 const envelope = {
   v: z.literal(1),
   eventId: z.uuid(),
   deviceId: z.uuid(),
   deviceSeq: z.int().min(1).max(2147483647),
-  staffId: z.string().regex(/^S-[0-9]{4}$/),
+  staffId,
   basedOn: z.int().min(0),
   hlc: z.string().regex(/^[0-9]{13}\.[0-9]{1,6}\.[A-Z0-9]{3}$/), // display/audit only (SEC-12)
   clientTime: z.iso.datetime(), // display/audit only (SEC-12)
@@ -35,6 +49,12 @@ export const AdmitEvent = event('ADMIT', z.strictObject({ patientId, label, bedI
 export const DischargeEvent = event('DISCHARGE', z.strictObject({ patientId, bedId }));
 export const TransferEvent = event('TRANSFER', z.strictObject({ patientId, fromBedId: bedId, toBedId: bedId }));
 export const RenameEvent = event('RENAME', z.strictObject({ patientId, label }));
+// FR-15 (v2). The task ID is the TASK_CREATED eventId. dueAt is shown to staff only, never used for ordering (SEC-12).
+export const TaskCreatedEvent = event(
+  'TASK_CREATED',
+  z.strictObject({ bedId, title: freeText(60), assignee: staffId.optional(), dueAt: z.iso.datetime().optional() }),
+);
+export const TaskCompletedEvent = event('TASK_COMPLETED', z.strictObject({ taskId: z.uuid() }));
 export const ResolveConflictEvent = event(
   'RESOLVE_CONFLICT',
   z.strictObject({
@@ -55,7 +75,7 @@ export function utf8Length(s: string): number {
 }
 
 export const EventSchema = z
-  .discriminatedUnion('type', [WardConfiguredEvent, AdmitEvent, DischargeEvent, TransferEvent, RenameEvent, ResolveConflictEvent])
+  .discriminatedUnion('type', [WardConfiguredEvent, AdmitEvent, DischargeEvent, TransferEvent, RenameEvent, ResolveConflictEvent, TaskCreatedEvent, TaskCompletedEvent])
   .refine((e) => utf8Length(JSON.stringify(e)) <= MAX_EVENT_BYTES, { error: `event exceeds ${MAX_EVENT_BYTES} bytes` });
 
 export type AnyEvent = z.infer<typeof EventSchema>;

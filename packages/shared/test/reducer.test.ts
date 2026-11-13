@@ -348,6 +348,41 @@ describe('RESOLVE_CONFLICT (FR-7, FR-8)', () => {
   });
 });
 
+describe('TASK_CREATED / TASK_COMPLETED (FR-15)', () => {
+  const task = (bedId: string, title = 'Clean bed') => ev('TASK_CREATED', { bedId, title });
+  const done = (t: AnyEvent) => ev('TASK_COMPLETED', { taskId: t.eventId });
+
+  it('opens a task on a bed, keyed by its event ID; completing it records who', () => {
+    const t = task('B02');
+    const b = checked(W(), t);
+    expect(out(b, t)).toEqual({ kind: 'applied' });
+    expect(b.tasks[t.eventId]).toEqual({ bedId: 'B02', title: 'Clean bed', assignee: null, dueAt: null, createdBy: 'S-0001', status: 'open', doneBy: null });
+    const c = done(t);
+    expect(checked(W(), t, c).tasks[t.eventId]).toMatchObject({ status: 'done', doneBy: 'S-0001' });
+  });
+
+  it('a task for an unknown bed is invalid; a second completion and an unknown task change nothing', () => {
+    const bad = task('B09');
+    expect(out(checked(W(), bad), bad)).toEqual({ kind: 'invalid', reason: 'UNKNOWN_BED' });
+    const t = task('B01');
+    const [c1, c2] = [done(t), done(t)];
+    const b = checked(W(), t, c1, c2);
+    expect(out(b, c2)).toEqual({ kind: 'noop', reason: 'ALREADY_DONE' });
+    const ghost = ev('TASK_COMPLETED', { taskId: '00000000-0000-4000-8000-0000000000ff' });
+    expect(out(checked(W(), ghost), ghost)).toEqual({ kind: 'noop', reason: 'UNKNOWN_TASK' });
+  });
+
+  it('stays with the bed through discharge and transfer, and keeps that bed from being removed while open', () => {
+    const t = task('B01');
+    const b = checked(W(), admit(P1, 'B01', 1), t, transfer(P1, 'B01', 'B02'));
+    expect(b.tasks[t.eventId]?.bedId).toBe('B01');
+    const re = ward('B02', 'B03');
+    expect(out(checked(W(), t, re), re)).toEqual({ kind: 'invalid', reason: 'BED_IN_USE' });
+    const re2 = ward('B02', 'B03');
+    expect(out(checked(W(), t, done(t), re2), re2)).toEqual({ kind: 'applied' });
+  });
+});
+
 describe('replay', () => {
   it('E5: replaying the same log (including a resolution) gives the same board', () => {
     const { a1, a2, events } = conflictOnB01();

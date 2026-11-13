@@ -20,16 +20,32 @@ export function cardState(bedId: string, view: Board, confirmed: Board): CardSta
   return { kind: 'empty' };
 }
 
-export function cardName(bedLabel: string, s: CardState): string {
+export interface TaskSummary {
+  open: number;
+  overdue: number;
+}
+
+/** Open tasks on a bed (FR-15). Overdue uses this tablet's clock: display only, never ordering (SEC-12). */
+export function taskSummary(view: Board, bedId: string, now: number): TaskSummary {
+  const open = Object.values(view.tasks ?? {}).filter((t) => t.bedId === bedId && t.status === 'open');
+  return { open: open.length, overdue: open.filter((t) => t.dueAt !== null && Date.parse(t.dueAt) < now).length };
+}
+
+/** "2 tasks, 1 overdue": the card shows the same words, so they stay inside its accessible name (WCAG 2.5.3). */
+export const taskWords = (t: TaskSummary | undefined): string[] =>
+  !t || t.open === 0 ? [] : [`${t.open} ${t.open === 1 ? 'task' : 'tasks'}`, ...(t.overdue ? [`${t.overdue} overdue`] : [])];
+
+export function cardName(bedLabel: string, s: CardState, tasks?: TaskSummary): string {
+  const t = taskWords(tasks).map((w) => `, ${w}`).join('');
   switch (s.kind) {
     case 'empty':
-      return `${bedLabel}, empty`;
+      return `${bedLabel}, empty${t}`;
     case 'occupied':
-      return `${bedLabel}, ${s.label}, ${s.pending ? 'pending, not yet confirmed by ward server' : 'confirmed'}`;
+      return `${bedLabel}, ${s.label}${t}, ${s.pending ? 'pending, not yet confirmed by ward server' : 'confirmed'}`;
     case 'conflict':
-      return `${bedLabel}, conflict: ${s.count} patients, charge nurse must choose`; // contains the visible text (WCAG 2.5.3)
+      return `${bedLabel}, conflict: ${s.count} patients${t}, charge nurse must choose`; // contains the visible text (WCAG 2.5.3)
     case 'pendingOut':
-      return `${bedLabel}, ${s.label}, pending move or discharge`;
+      return `${bedLabel}, ${s.label}${t}, pending move or discharge`;
   }
 }
 

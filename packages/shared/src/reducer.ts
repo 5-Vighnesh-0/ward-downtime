@@ -36,7 +36,18 @@ export interface Conflict {
   resolvedBy: string | null;
 }
 
-export type NoopReason = 'NOT_PLACED' | 'SAME_BED' | 'UNKNOWN_PATIENT' | 'ALREADY_RESOLVED';
+/** FR-15. Tied to a bed, not a patient: it stays when the patient moves or leaves. */
+export interface Task {
+  bedId: string;
+  title: string;
+  assignee: string | null;
+  dueAt: string | null; // display only (SEC-12)
+  createdBy: string;
+  status: 'open' | 'done';
+  doneBy: string | null;
+}
+
+export type NoopReason = 'NOT_PLACED' | 'SAME_BED' | 'UNKNOWN_PATIENT' | 'ALREADY_RESOLVED' | 'UNKNOWN_TASK' | 'ALREADY_DONE';
 export type InvalidReason =
   | 'UNKNOWN_BED'
   | 'PATIENT_ACTIVE'
@@ -60,10 +71,11 @@ export interface Board {
   patients: Record<string, Patient>;
   conflicts: Record<string, Conflict>;
   outcomes: Record<string, Outcome>;
+  tasks: Record<string, Task>;
   idleLockMinutes?: number; // unset until a WARD_CONFIGURED sets it; tablets then use 5 (SEC-7)
 }
 
-export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conflicts: {}, outcomes: {} });
+export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conflicts: {}, outcomes: {}, tasks: {} });
 
 /** Apply entries in order on top of `from`. `from` is never mutated. */
 export function replay(entries: Iterable<Ordered>, from: Board = emptyBoard()): Board {
@@ -74,6 +86,7 @@ export function replay(entries: Iterable<Ordered>, from: Board = emptyBoard()): 
     patients: { ...from.patients },
     conflicts: { ...from.conflicts },
     outcomes: { ...from.outcomes },
+    tasks: { ...from.tasks }, // a snapshot saved before v2 has none
   };
   for (const entry of entries) apply(b, entry);
   return b;
@@ -107,6 +120,19 @@ function outcomeOf(b: Board, seq: number, e: AnyEvent): Outcome {
     }
     case 'RESOLVE_CONFLICT':
       return resolve(b, seq, e.eventId, e.payload);
+    case 'TASK_CREATED': {
+      const { bedId, title, assignee, dueAt } = e.payload;
+      if (!b.beds[bedId]) return { kind: 'invalid', reason: 'UNKNOWN_BED' };
+      b.tasks[e.eventId] = { bedId, title, assignee: assignee ?? null, dueAt: dueAt ?? null, createdBy: e.staffId, status: 'open', doneBy: null };
+      return APPLIED;
+    }
+    case 'TASK_COMPLETED': {
+      const t = b.tasks[e.payload.taskId];
+      if (!t) return { kind: 'noop', reason: 'UNKNOWN_TASK' };
+      if (t.status === 'done') return { kind: 'noop', reason: 'ALREADY_DONE' }; // two nurses ticked it offline
+      b.tasks[e.payload.taskId] = { ...t, status: 'done', doneBy: e.staffId };
+      return APPLIED;
+    }
   }
 }
 
@@ -115,6 +141,7 @@ function configure(b: Board, { beds, idleLockMinutes }: { beds: { bedId: string;
   for (const [id, bed] of Object.entries(b.beds)) {
     if (bed.status !== 'empty' && !keep.has(id)) return { kind: 'invalid', reason: 'BED_IN_USE' };
   }
+  for (const t of Object.values(b.tasks)) if (t.status === 'open' && !keep.has(t.bedId)) return { kind: 'invalid', reason: 'BED_IN_USE' };
   const next: Record<string, Bed> = {};
   for (const { bedId, label } of beds) {
     const old = b.beds[bedId];

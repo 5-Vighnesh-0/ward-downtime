@@ -12,4 +12,6 @@ export const ALLOWED_ROLES: Record<EventType, readonly Role[]> = {
   TRANSFER: ALL,
   RENAME: ALL,
   RESOLVE_CONFLICT: ['charge', 'admin'],
+  TASK_CREATED: ALL,
+  TASK_COMPLETED: ALL,
 };
