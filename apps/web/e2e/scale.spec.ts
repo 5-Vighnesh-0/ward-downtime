@@ -1,5 +1,5 @@
 // PERF-03 (design.md §13.4, NFR-Scale): a 100,000-event log. Slow (minutes), so it runs only with WDB_SCALE=1:
-//   WDB_SCALE=1 pnpm e2e --project chromium e2e/scale.spec.ts
+//   WDB_SCALE=1 pnpm e2e --project=chromium e2e/scale.spec.ts
 // Budgets: server cold replay < 5 s; new device full pull + chain check < 60 s; cold start from snapshot < 3 s.
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { expect, test } from '@playwright/test';

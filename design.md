@@ -1356,7 +1356,7 @@ There is no external pager on an isolated LAN. Alerts show as a red banner with 
 
 ### 13.4 Performance budgets (targets; measured on the reference tablet in M3, NOT VERIFIED until measured)
 
-Measured 2026-11-12 on a development desktop (not the reference tablet, so the tablet numbers stay **NOT VERIFIED**): PERF-01 p95 5.7 ms (Chromium), 10 ms (Firefox, WebKit); PERF-03 server cold replay 3.1 s, new-device pull + chain check 23.5 s, cold start from snapshot 0.3 s; PERF-05 LCP from the SW cache 88 ms (Chromium only; INP not measured); PERF-06 JS 137 KB, CSS 3.4 KB gzip. PERF-01/05/06 run in CI (`e2e/budgets.spec.ts`); PERF-03 runs by hand (`WDB_SCALE=1 pnpm e2e --project chromium e2e/scale.spec.ts`).
+Measured 2026-11-12 on a development desktop (not the reference tablet, so the tablet numbers stay **NOT VERIFIED**): PERF-01 p95 5.7 ms (Chromium), 10 ms (Firefox, WebKit); PERF-03 server cold replay 3.1 s, new-device pull + chain check 23.5 s, cold start from snapshot 0.3 s; PERF-05 LCP from the SW cache 88 ms (Chromium only; INP not measured); PERF-06 JS 137 KB, CSS 3.4 KB gzip. PERF-01/05/06 run in CI (`e2e/budgets.spec.ts`); PERF-03 runs by hand (`WDB_SCALE=1 pnpm e2e --project=chromium e2e/scale.spec.ts`).
 
 | ID | Budget |
 |---|---|
