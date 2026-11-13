@@ -194,8 +194,10 @@ function StaffList({ net }: { net: Net }) {
 function WardBeds({ engine }: { engine: SyncEngine }) {
   const s = useEngine(engine);
   const [count, setCount] = useState(String(Object.keys(s.view.beds).length || 12));
+  const [lock, setLock] = useState(String(s.view.idleLockMinutes ?? 5));
   const [msg, setMsg] = useState<string>();
   const n = Number(count);
+  const m = Number(lock);
   return (
     <form
       className="flex flex-col gap-3"
@@ -203,16 +205,23 @@ function WardBeds({ engine }: { engine: SyncEngine }) {
         e.preventDefault();
         const beds = Array.from({ length: n }, (_, i) => ({ bedId: `B${String(i + 1).padStart(2, '0')}`, label: `Bed ${i + 1}` }));
         try {
-          await engine.record('WARD_CONFIGURED', { beds });
-          setMsg(`Saved ${n} beds. They show as soon as the change is applied.`);
+          await engine.record('WARD_CONFIGURED', { beds, idleLockMinutes: m });
+          setMsg(`Saved ${n} beds and a ${m} minute lock. They apply once the ward server accepts the change.`);
         } catch (err) {
           setMsg(err instanceof Error ? err.message : String(err));
         }
       }}
     >
       <Field label="Number of beds (1 to 60)" inputMode="numeric" value={count} onChange={(v) => setCount(v.replace(/\D/g, '').slice(0, 2))} />
-      <Button type="submit" variant="primary" disabled={!(n >= 1 && n <= 60)}>
-        Save beds
+      <Field
+        label="Lock tablets after this many idle minutes (1 to 15)"
+        inputMode="numeric"
+        value={lock}
+        onChange={(v) => setLock(v.replace(/\D/g, '').slice(0, 2))}
+        hint="Staff get a 30 second warning first."
+      />
+      <Button type="submit" variant="primary" disabled={!(n >= 1 && n <= 60 && m >= 1 && m <= 15)}>
+        Save ward settings
       </Button>
       {msg && <p role="status">{msg}</p>}
     </form>

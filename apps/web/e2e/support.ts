@@ -81,7 +81,7 @@ export async function unlock(page: Page): Promise<void> {
 export async function configureBeds(page: Page, n: number): Promise<void> {
   await page.getByRole('button', { name: 'Admin', exact: true }).click();
   await page.getByLabel('Number of beds (1 to 60)').fill(String(n));
-  await page.getByRole('button', { name: 'Save beds' }).click();
+  await page.getByRole('button', { name: 'Save ward settings' }).click();
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await expect(page.getByRole('button', { name: `Bed ${n}, empty` })).toBeVisible();
 }

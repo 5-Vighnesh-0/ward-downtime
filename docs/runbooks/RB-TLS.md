@@ -30,7 +30,9 @@ Do this before any outage (design.md §11.2). Commands run from the repo root on
 
 ## Check (every quarterly drill)
 
-- `curl --cacert root_ca.crt https://<host>/` returns 200 with the CSP and HSTS headers.
-- `openssl s_client -connect <host>:443 -tls1_2` **fails** with `protocol version`; `-tls1_3` succeeds.
+- `deploy/check-tls.sh <host> 443 80 root_ca.crt` prints `ok` for every line: TLS 1.3 with a certificate from the
+  ward root, TLS 1.2 refused, CSP, HSTS and the other §9.3 headers, HTTP redirected, the API reachable. CI runs it on
+  the demo stack (`images` job). It checks on this machine through `127.0.0.1`; on the ward network also run
+  `openssl s_client -connect <host>:443 -tls1_2` from a tablet's network and expect `protocol version`.
 - On a tablet: padlock shown, `isSecureContext` is true, the app works with the hospital uplink unplugged.
 - Root expires in 10 years and the intermediate in 1 year: check both dates.

@@ -52,6 +52,14 @@ describe('POST /api/v1/sessions', () => {
     expect(await actions()).toContain('SIGNIN_OK');
   });
 
+  it('marks every API response no-store, so patient labels are never cached (ASVS V14)', async () => {
+    const r = await signIn('S-0001', PIN);
+    expect(r.headers['cache-control']).toBe('no-store');
+    const read = await app.inject({ method: 'GET', url: '/api/v1/events?after=0', headers: { cookie: cookieOf(r) } });
+    expect([read.statusCode, read.headers['cache-control']]).toEqual([200, 'no-store']);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/events' })).headers['cache-control']).toBe('no-store'); // errors too
+  });
+
   it('gives the same answer for an unknown staff ID and a wrong PIN', async () => {
     expect(code(await signIn('S-0001', '000000'))).toEqual([401, 'SIGNIN_FAILED']);
     expect(code(await signIn('S-0077', PIN))).toEqual([401, 'SIGNIN_FAILED']);

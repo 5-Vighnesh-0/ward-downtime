@@ -18,7 +18,7 @@ for (const order of ['A first', 'B first'] as const) {
     await admit(b, 4, 'Rowan Ashby');
 
     for (const p of order === 'A first' ? [a, b] : [b, a]) await reconnect(p);
-    const conflict = { name: 'Bed 4, conflict between 2 patients, charge nurse must choose' };
+    const conflict = { name: 'Bed 4, conflict: 2 patients, charge nurse must choose' };
     for (const p of [a, b]) await expect(p.getByRole('button', conflict)).toBeVisible({ timeout: 20_000 });
 
     await a.getByRole('button', conflict).click();

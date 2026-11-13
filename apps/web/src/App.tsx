@@ -15,7 +15,6 @@ import { Banner, Button, LiveRegion, useEngine } from './ui/kit.tsx';
 
 const db = openDb();
 const net = browserNet();
-const LOCK_MS = 5 * 60_000; // §9.4.3 default. shortcut: fixed 5 min, make it a ward setting (1–15 min) when the admin screen grows one
 const WARN_MS = 30_000;
 const STALE_PUSH_MS = 10 * 60_000;
 
@@ -134,7 +133,8 @@ function Ready({ engine }: { engine: SyncEngine }) {
     lastUnsynced.current = s.unsynced;
   }, [s.unsynced, s.online]);
 
-  // Idle lock with a 30 s warning (WCAG 2.2.1).
+  // Idle lock with a 30 s warning (WCAG 2.2.1). The ward's setting counts once the server has accepted it (SEC-7, §9.4.3).
+  const lockMs = (s.confirmed.idleLockMinutes ?? 5) * 60_000;
   useEffect(() => {
     if (!session || locked) return;
     let warnT: ReturnType<typeof setTimeout>;
@@ -143,8 +143,8 @@ function Ready({ engine }: { engine: SyncEngine }) {
       clearTimeout(warnT);
       clearTimeout(lockT);
       setWarn(false);
-      warnT = setTimeout(() => setWarn(true), LOCK_MS - WARN_MS);
-      lockT = setTimeout(() => setLocked(true), LOCK_MS);
+      warnT = setTimeout(() => setWarn(true), lockMs - WARN_MS);
+      lockT = setTimeout(() => setLocked(true), lockMs);
     };
     const kinds = ['pointerdown', 'keydown'] as const;
     kinds.forEach((k) => addEventListener(k, reset));
@@ -154,7 +154,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
       clearTimeout(lockT);
       kinds.forEach((k) => removeEventListener(k, reset));
     };
-  }, [session, locked]);
+  }, [session, locked, lockMs]);
 
   if (s.alert === 'DEVICE_REVOKED') return <main className="p-6 text-xl font-semibold">{copy.revoked}</main>;
   if (!session || s.alert === 'SIGNED_OUT')

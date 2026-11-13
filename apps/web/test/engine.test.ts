@@ -1,4 +1,5 @@
 // Device sync engine against the real ward server (design.md §5; FR-1, FR-2, FR-4, FR-5, FR-10, SEC-8, SEC-9, SEC-10).
+// Also SEC-T-WIPE and SEC-T-REVOKE (client wipe), SEC-T-TAMPER (CHAIN_FORK on the device), SIM-04 (replay after restore).
 import { afterEach, describe, expect, it } from 'vitest';
 import { Dexie } from 'dexie';
 import { revokeDevice } from '@wdb/server/src/admin.ts';

@@ -60,6 +60,7 @@ export interface Board {
   patients: Record<string, Patient>;
   conflicts: Record<string, Conflict>;
   outcomes: Record<string, Outcome>;
+  idleLockMinutes?: number; // unset until a WARD_CONFIGURED sets it; tablets then use 5 (SEC-7)
 }
 
 export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conflicts: {}, outcomes: {} });
@@ -68,7 +69,7 @@ export const emptyBoard = (): Board => ({ atSeq: 0, beds: {}, patients: {}, conf
 export function replay(entries: Iterable<Ordered>, from: Board = emptyBoard()): Board {
   // Copy the records once; nested values are always replaced, never mutated.
   const b: Board = {
-    atSeq: from.atSeq,
+    ...from,
     beds: { ...from.beds },
     patients: { ...from.patients },
     conflicts: { ...from.conflicts },
@@ -91,7 +92,7 @@ function apply(b: Board, { serverSeq, event: e }: Ordered): void {
 function outcomeOf(b: Board, seq: number, e: AnyEvent): Outcome {
   switch (e.type) {
     case 'WARD_CONFIGURED':
-      return configure(b, e.payload.beds);
+      return configure(b, e.payload);
     case 'ADMIT':
       return admit(b, seq, e);
     case 'DISCHARGE':
@@ -109,7 +110,7 @@ function outcomeOf(b: Board, seq: number, e: AnyEvent): Outcome {
   }
 }
 
-function configure(b: Board, beds: { bedId: string; label: string }[]): Outcome {
+function configure(b: Board, { beds, idleLockMinutes }: { beds: { bedId: string; label: string }[]; idleLockMinutes?: number | undefined }): Outcome {
   const keep = new Set(beds.map((x) => x.bedId));
   for (const [id, bed] of Object.entries(b.beds)) {
     if (bed.status !== 'empty' && !keep.has(id)) return { kind: 'invalid', reason: 'BED_IN_USE' };
@@ -120,6 +121,7 @@ function configure(b: Board, beds: { bedId: string; label: string }[]): Outcome 
     next[bedId] = old ? { ...old, label } : { label, status: 'empty' };
   }
   b.beds = next;
+  if (idleLockMinutes !== undefined) b.idleLockMinutes = idleLockMinutes;
   return APPLIED;
 }
 

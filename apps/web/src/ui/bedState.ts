@@ -27,8 +27,27 @@ export function cardName(bedLabel: string, s: CardState): string {
     case 'occupied':
       return `${bedLabel}, ${s.label}, ${s.pending ? 'pending, not yet confirmed by ward server' : 'confirmed'}`;
     case 'conflict':
-      return `${bedLabel}, conflict between ${s.count} patients, charge nurse must choose`;
+      return `${bedLabel}, conflict: ${s.count} patients, charge nurse must choose`; // contains the visible text (WCAG 2.5.3)
     case 'pendingOut':
       return `${bedLabel}, ${s.label}, pending move or discharge`;
+  }
+}
+
+export const FILTERS = ['All', 'Empty', 'Occupied', 'Conflict', 'Pending'] as const;
+export type Filter = (typeof FILTERS)[number];
+
+/** Board filters (design.md §10.2). A pending move or discharge still has its patient in the bed, so it counts as occupied. */
+export function matches(f: Filter, s: CardState): boolean {
+  switch (f) {
+    case 'All':
+      return true;
+    case 'Empty':
+      return s.kind === 'empty';
+    case 'Occupied':
+      return s.kind === 'occupied' || s.kind === 'pendingOut';
+    case 'Conflict':
+      return s.kind === 'conflict';
+    case 'Pending':
+      return (s.kind === 'occupied' && s.pending) || s.kind === 'pendingOut';
   }
 }

@@ -20,7 +20,7 @@ function describe(e: AnyEvent): string {
     case 'RESOLVE_CONFLICT':
       return `Resolve ${e.payload.conflictId}`;
     case 'WARD_CONFIGURED':
-      return `Set up ${e.payload.beds.length} beds`;
+      return `Set up ${e.payload.beds.length} beds${e.payload.idleLockMinutes ? `, lock after ${e.payload.idleLockMinutes} min` : ''}`;
   }
 }
 

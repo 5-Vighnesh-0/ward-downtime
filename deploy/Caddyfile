@@ -38,5 +38,5 @@
 }
 
 http://{$WDB_HOST:wdb.localhost} {
-	redir https://{host}{uri} permanent
+	redir https://{host}{$WDB_ORIGIN_PORT}{uri} permanent
 }

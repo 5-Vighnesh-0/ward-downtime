@@ -1,7 +1,7 @@
 // Bed card states and accessible names (design.md §10.4, FR-10).
 import { describe, expect, it } from 'vitest';
 import { replay, type AnyEvent } from '@wdb/shared';
-import { cardName, cardState } from '../src/ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, type CardState } from '../src/ui/bedState.ts';
 
 let n = 0;
 const ev = (type: AnyEvent['type'], payload: object, basedOn = 0): AnyEvent =>
@@ -40,7 +40,20 @@ describe('cardName', () => {
     expect(cardName('Bed 4', { kind: 'empty' })).toBe('Bed 4, empty');
     expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: false })).toBe('Bed 4, Rowan Ashby, confirmed');
     expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: true })).toBe('Bed 4, Rowan Ashby, pending, not yet confirmed by ward server');
-    expect(cardName('Bed 4', { kind: 'conflict', count: 2 })).toBe('Bed 4, conflict between 2 patients, charge nurse must choose');
+    expect(cardName('Bed 4', { kind: 'conflict', count: 2 })).toBe('Bed 4, conflict: 2 patients, charge nurse must choose');
     expect(cardName('Bed 4', { kind: 'pendingOut', patientId: 'T-K3P-0001', label: 'Rowan Ashby' })).toBe('Bed 4, Rowan Ashby, pending move or discharge');
+  });
+});
+
+describe('board filters', () => {
+  it('each state shows under All and its own filters only', () => {
+    const states: [CardState, string[]][] = [
+      [{ kind: 'empty' }, ['All', 'Empty']],
+      [{ kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: false }, ['All', 'Occupied']],
+      [{ kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: true }, ['All', 'Occupied', 'Pending']],
+      [{ kind: 'pendingOut', patientId: 'T-K3P-0001', label: 'Rowan Ashby' }, ['All', 'Occupied', 'Pending']],
+      [{ kind: 'conflict', count: 2 }, ['All', 'Conflict']],
+    ];
+    for (const [s, want] of states) expect(FILTERS.filter((f) => matches(f, s))).toEqual(want);
   });
 });

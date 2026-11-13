@@ -48,6 +48,7 @@ export async function takeBackup(pool: pg.Pool, key: Buffer): Promise<{ bytes: B
     const lines = [JSON.stringify(header)];
     for (const [table, order] of TABLES) {
       for (let offset = 0; ; offset += PAGE) {
+        // nosemgrep: wdb-no-interpolated-query -- table and order come from the fixed TABLES list
         const { rows } = await client.query(`SELECT * FROM ${table} ORDER BY ${order} LIMIT ${PAGE} OFFSET ${offset}`);
         for (const r of rows) lines.push(JSON.stringify({ t: table, r }, replacer));
         if (rows.length < PAGE) break;
@@ -99,6 +100,7 @@ export async function restoreDatabase(pool: pg.Pool, db: Db, data: BackupData): 
         const cols = Object.keys(batch[0] ?? {});
         if (!cols.every((c) => /^[a-z][a-z0-9_]*$/.test(c))) throw new Error(`unexpected column in backup: ${cols.join(',')}`);
         const values = batch.map((_, r) => `(${cols.map((_c, k) => `$${r * cols.length + k + 1}`).join(',')})`).join(',');
+        // nosemgrep: wdb-no-interpolated-query -- table from TABLES, columns checked against /^[a-z][a-z0-9_]*$/, values are parameters
         await client.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES ${values}`, batch.flatMap((row) => cols.map((c) => row[c])));
       }
     }

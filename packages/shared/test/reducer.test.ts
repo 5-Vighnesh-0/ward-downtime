@@ -54,6 +54,17 @@ describe('WARD_CONFIGURED', () => {
     expect(out(b, re)).toEqual({ kind: 'invalid', reason: 'BED_IN_USE' });
     expect(Object.keys(b.beds)).toHaveLength(4);
   });
+
+  it('sets the idle lock time; a config without it keeps the last value; a refused one changes nothing', () => {
+    const set = ev('WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'B01' }, { bedId: 'B02', label: 'B02' }], idleLockMinutes: 10 });
+    expect(checked(W()).idleLockMinutes).toBeUndefined(); // tablets use the 5 min default
+    expect(checked(W(), set).idleLockMinutes).toBe(10);
+    expect(checked(W(), set, ward('B01', 'B02')).idleLockMinutes).toBe(10);
+    const refused = ev('WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'B01' }], idleLockMinutes: 1 });
+    const b = checked(W(), set, admit(P1, 'B02', 1), refused);
+    expect(out(b, refused)).toEqual({ kind: 'invalid', reason: 'BED_IN_USE' });
+    expect(b.idleLockMinutes).toBe(10);
+  });
 });
 
 describe('ADMIT', () => {

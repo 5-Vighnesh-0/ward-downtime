@@ -1,0 +1,42 @@
+# Project rules (design.md §9.1, §9.8). Run in CI next to p/typescript and p/owasp-top-ten.
+rules:
+  - id: wdb-no-label-in-log
+    message: Logs never hold patient labels or event payloads (SEC-19). Log IDs and codes instead.
+    severity: ERROR
+    languages: [typescript]
+    paths: { include: [/apps/server/src/] }
+    patterns:
+      - pattern-either:
+          - pattern: '$LOG.$LVL(..., {..., label: $V, ...}, ...)'
+          - pattern: '$LOG.$LVL(..., {..., payload: $V, ...}, ...)'
+          - pattern: '$LOG.$LVL(..., <... $E.label ...>, ...)'
+          - pattern: '$LOG.$LVL(..., <... $E.payload ...>, ...)'
+      - metavariable-regex: { metavariable: $LOG, regex: '^(.*\.)?log$' }
+      - metavariable-regex: { metavariable: $LVL, regex: '^(trace|debug|info|warn|error|fatal)$' }
+
+  - id: wdb-no-sql-raw
+    message: sql.raw with anything but a literal can inject SQL. Use Drizzle's sql`` template or query builder.
+    severity: ERROR
+    languages: [typescript]
+    patterns:
+      - pattern: sql.raw($X)
+      - pattern-not: sql.raw("...")
+
+  - id: wdb-no-interpolated-query
+    message: Interpolated SQL text. Pass values as parameters ($1, $2); interpolate only names checked against a fixed list.
+    severity: ERROR
+    languages: [typescript]
+    paths: { include: [/apps/server/src/, /tools/src/] }
+    pattern: '$C.query(`...${$X}...`, ...)'
+
+  - id: wdb-pure-shared
+    message: The shared reducer and export code stay pure (same log, same board on every device). Pass time in; never read clocks or randomness.
+    severity: ERROR
+    languages: [typescript]
+    paths: { include: [/packages/shared/src/] }
+    pattern-either:
+      - pattern: Date.now()
+      - pattern: new Date(...)
+      - pattern: Math.random()
+      - pattern: performance.now()
+      - pattern: crypto.getRandomValues(...)

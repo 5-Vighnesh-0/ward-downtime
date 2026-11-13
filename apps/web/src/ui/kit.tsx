@@ -23,6 +23,7 @@ export function Button(p: {
   type?: 'button' | 'submit';
   wide?: boolean;
   label?: string;
+  pressed?: boolean; // toggle buttons (aria-pressed)
 }) {
   // A ref, not disabled state: disabling during the click would cancel a submit button's form submission.
   const last = useRef(-Infinity); // event timestamps count from page load, so 0 would swallow the first 600 ms
@@ -30,6 +31,7 @@ export function Button(p: {
     <button
       type={p.type ?? 'button'}
       aria-label={p.label}
+      aria-pressed={p.pressed}
       disabled={p.disabled}
       onClick={(e) => {
         if (e.timeStamp - last.current < 600) return e.preventDefault();

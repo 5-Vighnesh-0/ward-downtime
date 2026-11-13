@@ -35,11 +35,14 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Recovery export JSON + CSV (FR-11), decrypt CLI, audit export, queue import (M4b)
 
 ## M5: Hardening
-- [ ] Auth, roles, idle lock (SEC-5 to SEC-8). Done in M2b and M3b except the per-ward idle lock setting
+- [x] Auth, roles, idle lock (SEC-5 to SEC-8). Per-ward idle lock time added in M5c
 - [x] Caddy + local CA, TLS 1.3, CSP (SEC-1 to SEC-3), Compose stack, logs, clock skew (SEC-28), health and alerts (SEC-20) (M5a)
-- [ ] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31). Offline E2E and FI-01–05 done (M3c, M5b); SEC-31 review in M5c
+- [x] Playwright offline scenarios, Toxiproxy faults, security tests (SEC-31): offline E2E (M3c), FI-01–05 (M5b), SEC-T map with TLS and header checks (M5c)
+- [x] ASVS 5.0.0 L2 chapter review, Top 10:2025 review, threat-model review (SEC-21, M5c): `docs/security/asvs-l2.md`
+- [x] Board filters (M5c)
 - [x] Backup/restore drill, runbooks (SEC-27), recovery replay from a device (design.md §11.4) (M5b)
-- [ ] Accessibility pass
+- [ ] Accessibility pass. A11Y-01 axe and A11Y-02 keyboard done (M5c); manual VoiceOver and NVDA pass needs devices
+- [ ] Nightly random-seed property runs (PB-01 at 20,000) and SIM-01/02 as named simulations
 
 ## M6: v2
 - [ ] Tasks tied to beds (FR-15)

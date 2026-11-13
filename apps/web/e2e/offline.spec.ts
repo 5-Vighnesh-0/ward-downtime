@@ -143,3 +143,21 @@ test('E2E-08: idle lock after 5 minutes, unlocked offline with the PIN (SEC-7)',
   await page.waitForTimeout(700); // past the 600 ms double-tap guard, as a person retyping would be
   await unlock(page);
 });
+
+test("E2E-08b: the ward's lock time, once the server accepts it, applies on another tablet (SEC-7)", async ({ page, browser }) => {
+  await setUpTablet(page);
+  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await page.getByLabel('Number of beds (1 to 60)').fill('2');
+  await page.getByLabel('Lock tablets after this many idle minutes (1 to 15)').fill('2');
+  await page.getByRole('button', { name: 'Save ward settings' }).click();
+  await unsynced(page, 0);
+  const other = await (await browser.newContext()).newPage();
+  await other.clock.install();
+  await setUpTablet(other, 'nurse', 'Tablet B');
+  await expect(other.getByRole('button', { name: 'Bed 2, empty' })).toBeVisible();
+  await other.clock.fastForward('01:31');
+  await expect(other.getByText('Locking in 30 seconds')).toBeVisible();
+  await other.clock.fastForward('00:30');
+  await expect(other.getByRole('heading', { name: 'Locked' })).toBeVisible();
+  await other.context().close();
+});

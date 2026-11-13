@@ -28,6 +28,7 @@ export const WardConfiguredEvent = event(
   'WARD_CONFIGURED',
   z.strictObject({
     beds: z.array(z.strictObject({ bedId, label: z.string().min(1).max(16).regex(noControl) })).min(1).max(60),
+    idleLockMinutes: z.int().min(1).max(15).optional(), // SEC-7 per-ward idle lock; absent keeps the last value
   }),
 );
 export const AdmitEvent = event('ADMIT', z.strictObject({ patientId, label, bedId }));

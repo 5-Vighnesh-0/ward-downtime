@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, type CardState } from '../ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, type CardState, type Filter } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'], string> = {
@@ -22,7 +22,8 @@ function BedCard({ label, state, onOpen }: { label: string; state: CardState; on
       aria-label={cardName(label, state)}
       className={`flex min-h-28 flex-col items-start gap-1 rounded-lg p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-dashed' : ''}`}
     >
-      <span className="text-text-muted tabular-nums">{label}</span>
+      {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
+      <span className="text-text-muted tabular-nums">{label}</span>{' '}
       {state.kind === 'empty' && <span className="text-text-muted">Empty</span>}
       {(state.kind === 'occupied' || state.kind === 'pendingOut') && (
         <span className={`text-[22px] font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
@@ -33,6 +34,7 @@ function BedCard({ label, state, onOpen }: { label: string; state: CardState; on
           {copy.conflictTitle(state.count)}
         </span>
       )}
+      {pending && ' '}
       {pending && (
         <span className="font-semibold text-status-pending">
           <span aria-hidden="true">🕓 </span>Pending
@@ -45,15 +47,29 @@ function BedCard({ label, state, onOpen }: { label: string; state: CardState; on
 export function BoardScreen({ engine, isAdmin, onResolve }: { engine: SyncEngine; isAdmin: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
-  const beds = Object.entries(s.view.beds).sort(([a], [b]) => a.localeCompare(b));
+  const [filter, setFilter] = useState<Filter>('All');
+  const beds = Object.entries(s.view.beds)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed) }));
+  const shown = beds.filter((b) => matches(filter, b.state));
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-2xl font-semibold">Beds</h1>
       {beds.length === 0 && <p>{copy.noBeds + (isAdmin ? ' Use Admin → Ward beds.' : '')}</p>}
+      {beds.length > 0 && (
+        <div role="group" aria-label="Show beds" className="flex flex-wrap gap-2">
+          {FILTERS.map((f) => (
+            <Button key={f} pressed={filter === f} variant={filter === f ? 'primary' : 'secondary'} onClick={() => setFilter(f)}>
+              {`${f} (${beds.filter((b) => matches(f, b.state)).length})`}
+            </Button>
+          ))}
+        </div>
+      )}
+      {beds.length > 0 && shown.length === 0 && <p role="status">No beds match this filter.</p>}
       <ul className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
-        {beds.map(([id, bed]) => (
-          <li key={id} className="grid">
-            <BedCard label={bed.label} state={cardState(id, s.view, s.confirmed)} onOpen={() => setOpen(id)} />
+        {shown.map((b) => (
+          <li key={b.id} className="grid">
+            <BedCard label={b.label} state={b.state} onOpen={() => setOpen(b.id)} />
           </li>
         ))}
       </ul>

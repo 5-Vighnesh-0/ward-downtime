@@ -55,10 +55,18 @@ describe('EventSchema', () => {
     expect(ok(ev('RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: [] }))).toBe(false);
   });
 
+  it('accepts an idle lock time of 1–15 whole minutes on WARD_CONFIGURED', () => {
+    const w = (idleLockMinutes: unknown) => ev('WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'B01' }], idleLockMinutes: idleLockMinutes as number });
+    expect(ok(w(1))).toBe(true);
+    expect(ok(w(15))).toBe(true);
+    for (const bad of [0, 16, 2.5, '5', null]) expect(ok(w(bad))).toBe(false);
+  });
+
   it('caps serialized size at 4 KiB', () => {
     // 60 beds with 16-char labels is the largest valid event; it must fit.
     const big = ev('WARD_CONFIGURED', {
       beds: Array.from({ length: 60 }, (_, i) => ({ bedId: `B${String(i + 1).padStart(2, '0')}`, label: 'L'.repeat(16) })),
+      idleLockMinutes: 15,
     });
     expect(JSON.stringify(big).length).toBeLessThanOrEqual(4096); // ASCII only, so chars = bytes
     expect(ok(big)).toBe(true);

@@ -118,6 +118,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
   });
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-request-id', req.id);
+    reply.header('cache-control', 'no-store'); // responses can hold patient labels: never cache them (ASVS V14)
   });
   // SEC-22: SameSite=Strict cookie + required custom header + Origin check on every state change.
   app.addHook('onRequest', async (req, reply) => {
@@ -390,7 +391,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
 
     // --- Recovery export (FR-11, SEC-15) and audit export (FR-14). The passphrase is never stored or logged. ---
     const download = (reply: FastifyReply, f: ExportFile) =>
-      reply.header('content-type', 'application/octet-stream').header('content-disposition', `attachment; filename="${f.filename}"`).header('cache-control', 'no-store').send(f.body);
+      reply.header('content-type', 'application/octet-stream').header('content-disposition', `attachment; filename="${f.filename}"`).send(f.body);
     const exportLimit = { rateLimit: { max: 6, timeWindow: '1 minute', keyGenerator: byDevice, hook: 'preHandler' as const } };
 
     api.post('/api/v1/exports', { onRequest: requireSession(['charge', 'admin']), config: exportLimit }, async (req, reply) => {
