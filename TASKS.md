@@ -49,5 +49,6 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Shift handoff notes (FR-15), shown only for the patient they were written for (M6b)
 
 ## Before going public
-- [ ] LICENSE, SECURITY.md, CONTRIBUTING.md
-- [ ] README states synthetic data only, no compliance claim
+- [x] LICENSE (MIT), SECURITY.md (GitHub private reporting), CONTRIBUTING.md
+- [x] README states synthetic data only, no compliance claim; status, run steps and docs list brought up to date
+- [ ] Make the repo public, then turn on private vulnerability reporting (Settings → Security). Owner's step
