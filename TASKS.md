@@ -51,4 +51,4 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 ## Before going public
 - [x] LICENSE (MIT), SECURITY.md (GitHub private reporting), CONTRIBUTING.md
 - [x] README states synthetic data only, no compliance claim; status, run steps and docs list brought up to date
-- [ ] Make the repo public, then turn on private vulnerability reporting (Settings → Security). Owner's step
+- [x] Repo made public and private vulnerability reporting turned on (2026-11-13)
