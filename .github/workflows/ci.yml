@@ -1,4 +1,4 @@
-# SEC-29. Jobs that have something to check; container-image scans and nightly seeds come later (design.md §14).
+# SEC-29. Every push and pull request. Random-seed property runs are in nightly.yml.
 name: ci
 
 on:

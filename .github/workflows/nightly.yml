@@ -1,0 +1,37 @@
+# Nightly property tests with a random seed and 20,000 runs (design.md §9.8, §12.1; PB-01 to PB-05).
+# CI runs one fixed seed; this explores new ones. A failure keeps its log, which names the seed to replay:
+#   WDB_PROP_SEED=<seed> WDB_PROP_RUNS=20000 pnpm --filter @wdb/shared exec vitest run test/prop --testTimeout=1200000
+name: nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WDB_PROP_RUNS: '20000'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # One seed for every test file, printed at the top of the log.
+      - run: |
+          export WDB_PROP_SEED=$(( (RANDOM << 15) | RANDOM ))
+          { echo "seed $WDB_PROP_SEED"; pnpm --filter @wdb/shared exec vitest run test/prop --testTimeout=1200000; } 2>&1 | tee "$RUNNER_TEMP/properties.log"
+        shell: bash -o pipefail {0}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failing-seed
+          path: ${{ runner.temp }}/properties.log

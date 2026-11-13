@@ -18,7 +18,7 @@ These match the acceptance scenarios in `prd.md` (1 to 7). Each has a named test
 ## Rules
 - Reducer and sync logic: write the test first.
 - Every bug gets a regression test, ideally a saved seed.
-- Convergence tests run in CI on every push (fixed seeds) and nightly (random seeds, failures saved).
+- Convergence tests run in CI on every push (fixed seed 42, 1,000 runs) and nightly (one random seed, 20,000 runs; a failing log is kept). Replay a seed with `WDB_PROP_SEED=<seed> WDB_PROP_RUNS=20000 pnpm --filter @wdb/shared exec vitest run test/prop --testTimeout=1200000`.
 - Never use real data in tests (see `DATA_POLICY.md`).
 
 ## Commands

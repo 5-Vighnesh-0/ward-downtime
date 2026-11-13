@@ -63,7 +63,7 @@ Corrected in the tables, not built:
   the host's own monitoring.
 - **"Devices pin the local CA root and hostname":** the app does not pin. Trust comes from the root installed by MDM
   in the OS trust store. A rogue server is still caught by the device's head-hash check.
-- **Nightly random-seed property runs (PB-01 at 20,000):** not built; CI runs a fixed seed at 1,000 runs.
+- **Nightly random-seed property runs (PB-01 at 20,000):** not built at the review; added 2026-11-13 (`.github/workflows/nightly.yml`).
 
 ## 4. Not covered
 
