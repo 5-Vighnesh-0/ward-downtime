@@ -14,6 +14,8 @@ FROM node:22.23.4-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68ae
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 # The server never runs npm, npx or corepack; removing them drops the base image's npm CVEs from the runtime.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+# The backup service writes here as `node`; a new named volume takes this ownership.
+RUN mkdir /backups && chown node:node /backups
 COPY --from=server-build /src/node_modules /app/node_modules
 COPY --from=server-build /src/packages/shared /app/packages/shared
 COPY --from=server-build /src/apps/server /app/apps/server

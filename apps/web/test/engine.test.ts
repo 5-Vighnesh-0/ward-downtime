@@ -250,6 +250,42 @@ describe('pull, chain check and live stream (§5.6, §9.6)', () => {
   }, 30_000);
 });
 
+describe('server restored from an old backup (design.md §11.4)', () => {
+  it('tablets stop pushing, an admin tablet replays the lost entries, then everything converges', async () => {
+    const admin = await setup();
+    const t = await another();
+    await t.engine.admit({ label: 'Rowan Ashby', bedId: 'B01' });
+    await t.engine.admit({ label: 'Mira Holt', bedId: 'B02' });
+    await t.engine.push();
+    await admin.engine.pull();
+    const head = (await t.db.meta.get('device'))?.headHash;
+    // The server loses everything after the ward setup (entry 1), as a restore from an old backup would.
+    await ward.owner.pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only');
+    await ward.owner.pool.query('DELETE FROM events WHERE server_seq > 1');
+    await ward.owner.pool.query('ALTER TABLE events ENABLE TRIGGER events_append_only');
+    await ward.owner.pool.query('UPDATE log_head SET last_seq = 1, last_hash = (SELECT hash FROM events WHERE server_seq = 1)');
+
+    await t.engine.pull(); // a plain pull already notices, before anything is pushed
+    expect(t.engine.state.alert).toBe('SERVER_BEHIND');
+    await t.engine.admit({ label: 'Ola Brandt', bedId: 'B03' }); // made during the outage
+    await t.engine.push();
+    expect(t.engine.state.alert).toBe('SERVER_BEHIND');
+    expect(t.engine.state.unsynced).toBe(1);
+    expect((await serverLog(ward)).length).toBe(1); // nothing pushed onto the restored log
+
+    expect(await admin.engine.replayToServer()).toBe(2);
+    expect(admin.engine.state.alert).toBe(null);
+    await t.engine.pull();
+    expect(t.engine.state.alert).toBe(null);
+    await t.engine.push();
+    expect(t.engine.state.unsynced).toBe(0);
+    expect((await serverLog(ward)).length).toBe(4);
+    expect(t.engine.state.confirmed.beds.B03).toMatchObject({ status: 'occupied' });
+    const [first] = await ward.owner.pool.query('SELECT encode(hash, \'hex\') AS h FROM events WHERE server_seq = 3').then((r) => r.rows);
+    expect(first.h).toBe(head); // the replayed entries are the original ones, hashes and all
+  });
+});
+
 describe('session and device lifecycle (SEC-8, SEC-14)', () => {
   it('a revoked tablet deletes its local database on next contact', async () => {
     await setup();

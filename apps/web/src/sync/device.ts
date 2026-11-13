@@ -36,6 +36,8 @@ export async function request(net: Net, method: string, path: string, body?: unk
       ...headers,
     },
     body: body === undefined ? null : JSON.stringify(body),
+    // A reply lost on a half-open connection would otherwise wait forever; the outbox retries safely (FR-4).
+    signal: AbortSignal.timeout(30_000),
   });
   const offset = Number(res.headers.get('x-wdb-clock-offset-ms') ?? NaN);
   if (Number.isFinite(offset)) net.clockOffsetMs = offset;

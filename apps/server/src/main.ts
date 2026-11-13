@@ -15,4 +15,8 @@ const stop = async () => {
 process.once('SIGTERM', stop);
 process.once('SIGINT', stop);
 await app.listen({ host: HOST, port: Number(PORT) });
+// SEC-10: check the whole hash chain now and every hour; a failure raises CHAIN_BREAK.
+const verify = () => app.checkChain().catch((e) => app.log.error({ event: 'chain_verify', error: String(e) }));
+void verify();
+setInterval(verify, 60 * 60_000).unref();
 console.log(`ward server listening on ${HOST}:${PORT}`); // the E2E harness waits for this line

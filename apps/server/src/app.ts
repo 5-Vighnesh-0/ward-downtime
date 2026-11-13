@@ -13,8 +13,9 @@ import { checkPin, fingerprint, newToken, parseDeviceSig, tokenHash, verifyDevic
 import { auditLog, devices, logHead, sessions, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
 import { readEntries } from './entries.ts';
-import { createAuditExport, createRecoveryExport, type ExportFile } from './recovery.ts';
+import { createAuditExport, createRecoveryExport, replayEntries, type ExportFile } from './recovery.ts';
 import { publicKeyFromRaw } from './signature.ts';
+import type { ChainResult } from './chain.ts';
 import { createMonitor, SKEW_ALERT_MS } from './monitor.ts';
 import { createStreams } from './stream.ts';
 
@@ -40,6 +41,9 @@ interface Auth {
 declare module 'fastify' {
   interface FastifyRequest {
     auth?: Auth;
+  }
+  interface FastifyInstance {
+    checkChain: () => Promise<ChainResult>; // main.ts runs it at boot and hourly
   }
 }
 
@@ -86,11 +90,16 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     bodyLimit: 262_144, // SEC-23
     logger: opts.log ? { level: opts.log.level, redact: { paths: LOG_REDACT, censor: '[REDACTED]' }, ...(opts.log.stream ? { stream: opts.log.stream } : {}) } : false,
     requestIdLogLabel: 'requestId',
+    // On shutdown close every connection, not only those idle at that instant: a keep-alive connection busy then
+    // would otherwise hold close() open for the 72 s keep-alive timeout. A request cut off here is safe; tablets
+    // retry and every write is idempotent (FR-4).
+    forceCloseConnections: true,
     trustProxy: (_address: string, hop: number) => hop < (opts.proxyHops ?? 0),
     genReqId: () => randomUUID(),
     requestIdHeader: false,
   });
   const monitor = createMonitor(db, app.log);
+  app.decorate('checkChain', monitor.checkChain);
   const bus = new EventEmitter().setMaxListeners(100);
   const streams = createStreams(db, bus, { backlog: opts.streamBacklog ?? 1000, pingMs: opts.streamPingMs ?? 20_000 });
   const maxInflight = opts.maxInflightPushes ?? 500;
@@ -255,6 +264,11 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         const body = Batch.safeParse(req.body);
         if (!body.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid batch', z.flattenError(body.error)));
         if (body.data.deviceId !== req.auth?.deviceId) return deny(reply, 403, 'DEVICE_MISMATCH', 'Batch is not from the signed-in device');
+        // §11.4: a tablet that has seen more of the log than this server (restored from an old backup) must not push:
+        // new events would take serverSeqs the tablet already knows. It waits for the admin to replay the log.
+        const known = Number(req.headers['x-wdb-known-seq'] ?? 0);
+        const [h] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
+        if (Number.isInteger(known) && known > (h?.lastSeq ?? 0)) return deny(reply, 409, 'SERVER_BEHIND', 'This server has fewer log entries than the tablet');
         inflight++;
         const t0 = performance.now();
         try {
@@ -278,10 +292,15 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       async (req, reply) => {
         const q = PullQuery.safeParse(req.query);
         if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
-        const [head] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
+        const [head] = await db.select({ lastSeq: logHead.lastSeq, lastHash: logHead.lastHash }).from(logHead).where(eq(logHead.id, 1));
         // disabledStaff: devices drop these staff members' offline sign-in (design.md §9.2.3).
         const disabled = await db.select({ id: staff.staffId }).from(staff).where(eq(staff.status, 'disabled')).orderBy(staff.staffId);
-        return { headSeq: head?.lastSeq ?? 0, entries: await readEntries(db, q.data.after, q.data.limit), disabledStaff: disabled.map((r) => r.id) };
+        return {
+          headSeq: head?.lastSeq ?? 0,
+          headHash: head?.lastHash.toString('hex') ?? '',
+          entries: await readEntries(db, q.data.after, q.data.limit),
+          disabledStaff: disabled.map((r) => r.id),
+        };
       },
     );
 
@@ -404,6 +423,21 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       if (!out.ok) return deny(reply, out.status, out.code, 'Device not found or not yet approved');
       if (out.results.some((r) => r.status === 'appended')) bus.emit('appended');
       return { headSeq: out.headSeq, headHash: out.headHash, results: out.results };
+    });
+
+    // --- Recovery replay (§11.4): admin sends the entries a restored server lost, from the most complete tablet ---
+    api.post('/api/v1/recovery/replay', { onRequest: admin }, async (req, reply) => {
+      const b = z.strictObject({ entries: z.array(z.unknown()).max(100) }).safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid replay', z.flattenError(b.error)));
+      const auth = req.auth as Auth;
+      const out = await replayEntries(db, b.data.entries);
+      await audit(req, { staffId: auth.staffId, deviceId: auth.deviceId, action: 'RECOVERY_REPLAY', outcome: out.ok ? 'ok' : 'denied', code: out.ok ? String(out.replayed) : `${out.code}@${out.atSeq}` });
+      if (!out.ok) {
+        req.log.error({ event: 'recovery_replay', code: out.code, atSeq: out.atSeq });
+        return reply.code(409).send(error(out.code, `Entry ${out.atSeq} does not extend this server's log`, { atSeq: out.atSeq }));
+      }
+      if (out.replayed > 0) bus.emit('appended');
+      return { headSeq: out.headSeq, headHash: out.headHash, replayed: out.replayed };
     });
 
     // --- Health and alerts (SEC-20): alerts for charge and admin tablets, the full panel for admins ---

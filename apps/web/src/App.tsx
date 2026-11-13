@@ -212,6 +212,12 @@ function Ready({ engine }: { engine: SyncEngine }) {
         {!s.online && <Banner tone="warn">{copy.offline}</Banner>}
         {s.alert === 'CHAIN_FORK' && <Banner tone="error">{copy.chainFork}</Banner>}
         {s.alert === 'STORAGE_LOST' && <Banner tone="error">{copy.storageLost}</Banner>}
+        {s.alert === 'SERVER_BEHIND' && (
+          <Banner tone="warn">
+            {copy.serverBehind}
+            {session.role === 'admin' && <Button onClick={() => setTab('recovery')}>Open Recovery</Button>}
+          </Banner>
+        )}
         {s.clockOffsetMs !== null && Math.abs(s.clockOffsetMs) > 120_000 && <Banner tone="warn">{copy.clockSkew(s.clockOffsetMs)}</Banner>}
         {s.online &&
           alerts.map((a) => (

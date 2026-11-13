@@ -19,6 +19,7 @@
     "e2e",
     "vitest.config.ts",
     "vite.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.faults.config.ts"
   ]
 }

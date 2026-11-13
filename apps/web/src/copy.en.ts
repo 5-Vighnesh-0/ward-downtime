@@ -35,6 +35,7 @@ export const copy = {
     CLOCK_SKEW: 'A tablet clock is wrong',
     DEVICE_LAGGING: 'A tablet has not been in contact for over an hour',
   } as Record<string, string>,
+  serverBehind: 'Recovery mode: the ward server has fewer changes than this tablet (it was restored from a backup). New changes stay on this tablet until an admin replays the log in Recovery.',
   noConflicts: 'No conflicts. When two patients are placed in the same bed, they appear here for you to choose.',
   noUnplaced: 'Everyone has a bed. Patients not kept after a conflict appear here.',
   // §10.6: plain reasons for outcomes the author needs to act on; other codes show as-is.

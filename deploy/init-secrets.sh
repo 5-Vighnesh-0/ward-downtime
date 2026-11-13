@@ -5,7 +5,7 @@ set -eu
 dir="${WDB_SECRETS_DIR:-$(dirname "$0")/secrets}"
 mkdir -p "$dir"
 chmod 700 "$dir"
-for name in db_owner_password db_app_password step_ca_password; do
+for name in db_owner_password db_app_password step_ca_password backup_key; do
   [ -e "$dir/$name" ] && continue
   (umask 077 && openssl rand -base64 32 | tr -d '\n' > "$dir/$name")
   echo "created $dir/$name"

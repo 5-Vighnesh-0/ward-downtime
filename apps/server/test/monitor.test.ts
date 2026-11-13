@@ -104,6 +104,37 @@ describe('alerts and health (SEC-20)', () => {
   });
 });
 
+describe('chain check and backups (SEC-10, SEC-27)', () => {
+  it('a broken hash chain raises CHAIN_BREAK, is audited, and shows on health', async () => {
+    await app.inject({
+      method: 'POST', url: '/api/v1/events', headers: { ...CSRF, cookie: cookie.admin ?? '' },
+      payload: { deviceId: d.deviceId, events: [signed(d, 'WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'Bed 1' }] }, { staffId: 'S-0004' }), admitOn(d, 1, { staffId: 'S-0004' })] },
+    });
+    expect(await app.checkChain()).toMatchObject({ ok: true, headSeq: 2 });
+    expect(await alertCodes()).toEqual([]);
+    await owner.query('ALTER TABLE events DISABLE TRIGGER events_append_only');
+    try {
+      await owner.query(`UPDATE events SET body = jsonb_set(body, '{payload,label}', '"Changed"') WHERE server_seq = 2`);
+    } finally {
+      await owner.query('ALTER TABLE events ENABLE TRIGGER events_append_only');
+    }
+    expect(await app.checkChain()).toMatchObject({ ok: false, firstBadSeq: 2 });
+    expect(await alertCodes()).toEqual(['CHAIN_BREAK']);
+    expect((await owner.query("SELECT code FROM audit_log WHERE action = 'CHAIN_VERIFY_FAIL'")).rows).toEqual([{ code: '2' }]);
+    expect((await get('admin', '/api/v1/admin/health')).json().chain).toMatchObject({ ok: false, firstBadSeq: 2 });
+    await reset(owner);
+    expect(await app.checkChain()).toMatchObject({ ok: true }); // a later check clears it (sessions are gone after the reset)
+  });
+
+  it('BACKUP_STALE when the newest backup is over an hour old; health shows its age', async () => {
+    await owner.query("INSERT INTO audit_log (action, outcome, code, request_id, server_time) VALUES ('BACKUP_DONE', 'ok', '0', 'backup', now() - interval '61 minutes')");
+    expect(await alertCodes()).toEqual(['BACKUP_STALE']);
+    expect((await get('admin', '/api/v1/admin/health')).json().backupAgeSeconds).toBeGreaterThan(3600);
+    await owner.query("INSERT INTO audit_log (action, outcome, code, request_id) VALUES ('BACKUP_DONE', 'ok', '0', 'backup')");
+    expect(await alertCodes()).toEqual([]);
+  });
+});
+
 describe('logs (design.md §13.1)', () => {
   it('JSON lines with requestId and key events; never a PIN, cookie, device signature or patient label', async () => {
     await app.inject({ method: 'POST', url: '/api/v1/sessions', headers: { ...CSRF, 'x-wdb-device-sig': deviceSig(d, 'POST', '/api/v1/sessions') }, payload: { staffId: 'S-0001', pin: '999999' } });

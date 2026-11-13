@@ -68,6 +68,41 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # Every 15 minutes: encrypted backup of the log, audit and staff/device tables (design.md §11.3).
+  # It reads as the app role; copy /backups to the standby or backup host (outside this file).
+  backup:
+    <<: *hardened
+    build: { context: ., dockerfile: deploy/Dockerfile, target: server }
+    image: wdb/server:local
+    command: [node, src/backup.ts, backup, --dir, /backups, --every-minutes, '15']
+    environment:
+      DATABASE_URL: postgres://wdb_app@postgres:5432/wdb
+      PGPASSWORD_FILE: /run/secrets/db_app_password
+      WDB_BACKUP_KEY_FILE: /run/secrets/backup_key
+    secrets: [db_app_password, backup_key]
+    volumes: ['${WDB_BACKUP_DIR:-backups}:/backups']
+    networks: [db]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # Restore drill or real restore (RB-BACKUP): docker compose run --rm restore /backups/<file>
+  # Owner role into an EMPTY database (WDB_RESTORE_DB, default wdb); ends with verify-chain.
+  restore:
+    profiles: [restore]
+    build: { context: ., dockerfile: deploy/Dockerfile, target: server }
+    image: wdb/server:local
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    entrypoint: [node, src/backup.ts, restore]
+    environment:
+      DATABASE_URL: postgres://wdb_owner@postgres:5432/${WDB_RESTORE_DB:-wdb}
+      PGPASSWORD_FILE: /run/secrets/db_owner_password
+      WDB_BACKUP_KEY_FILE: /run/secrets/backup_key
+    secrets: [db_owner_password, backup_key]
+    volumes: ['${WDB_BACKUP_DIR:-backups}:/backups:ro']
+    networks: [db]
+
   postgres:
     image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
     restart: unless-stopped
@@ -143,8 +178,10 @@ volumes:
   caddy_config: {}
   step: {}
   ca_root: {}
+  backups: {}
 
 secrets:
   db_owner_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/db_owner_password' }
   db_app_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/db_app_password' }
   step_ca_password: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/step_ca_password' }
+  backup_key: { file: '${WDB_SECRETS_DIR:-./deploy/secrets}/backup_key' } # escrow offline with the CA root (§11.3)

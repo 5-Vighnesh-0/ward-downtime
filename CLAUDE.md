@@ -26,7 +26,7 @@ docs/             adr/, runbooks/
 ```
 
 ## Commands
-`pnpm install` · `docker compose up -d db-test` (needed by `pnpm test`) · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm --filter @wdb/server migrate` · `pnpm --filter @wdb/server verify-chain` · `pnpm --filter @wdb/server export:decrypt <file>` (passphrase on stdin) · `pnpm --filter @wdb/server admin add-staff|approve-device` · `pnpm --filter @wdb/server start` · `pnpm --filter @wdb/web dev|build` · `pnpm e2e` (once: `pnpm --filter @wdb/web exec playwright install`; `WDB_SCALE=1` adds the 100k-event run) · `./deploy/init-secrets.sh` then `docker compose up -d --build` (ward stack; see docs/runbooks/RB-TLS.md)
+`pnpm install` · `docker compose up -d db-test` (needed by `pnpm test`) · `pnpm test` · `pnpm lint` · `pnpm typecheck` · `pnpm check:synthetic` · `pnpm seed` · `pnpm synthea:labels --jar <path>` · `pnpm --filter @wdb/server migrate` · `pnpm --filter @wdb/server verify-chain` · `pnpm --filter @wdb/server export:decrypt <file>` (passphrase on stdin) · `pnpm --filter @wdb/server admin add-staff|approve-device` · `pnpm --filter @wdb/server start` · `pnpm --filter @wdb/web dev|build` · `pnpm e2e` (once: `pnpm --filter @wdb/web exec playwright install`; `WDB_SCALE=1` adds the 100k-event run) · `pnpm --filter @wdb/web e2e:faults` (Toxiproxy fault suite, needs Docker) · `docker compose run --rm restore /backups/<file>` (see docs/runbooks/RB-BACKUP.md) · `./deploy/init-secrets.sh` then `docker compose up -d --build` (ward stack; see docs/runbooks/RB-TLS.md)
 
 ## Working style
 - Tests first for the reducer and sync logic. Convergence must be proven with property-based tests.

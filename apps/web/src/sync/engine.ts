@@ -4,7 +4,9 @@ import { entryHash, sealWdbx, signEvent } from './crypto.ts';
 import { ApiError, request, type Net } from './device.ts';
 import type { LedgerEntry, Meta, OutboxItem, Session, WdbDb } from './db.ts';
 
-export type Alert = 'SIGNED_OUT' | 'DEVICE_REVOKED' | 'CHAIN_FORK' | 'STORAGE_LOST';
+// SERVER_BEHIND: the server has fewer log entries than this tablet (restored from an old backup, §11.4).
+// The tablet stops pushing until an admin replays the log.
+export type Alert = 'SIGNED_OUT' | 'DEVICE_REVOKED' | 'CHAIN_FORK' | 'STORAGE_LOST' | 'SERVER_BEHIND';
 
 export interface EngineState {
   view: Board; // confirmed board + pending changes (what the ward sees on this device)
@@ -138,6 +140,21 @@ export class SyncEngine {
   }
 
   /** Recovery export from this tablet's own copy of the log, for when the ward server is down (§7.3). */
+  /** §11.4, admin only: send the server the log entries it lost, from this tablet's copy. Returns how many. */
+  async replayToServer(): Promise<number> {
+    const head = (await (await request(this.#net, 'GET', `/api/v1/events?after=${this.#meta.lastServerSeq}&limit=1`)).json()) as { headSeq: number };
+    let sent = 0;
+    for (let after = head.headSeq; ; ) {
+      const entries = await this.#db.events.where('serverSeq').above(after).limit(100).toArray();
+      if (!entries.length) break;
+      const r = (await (await request(this.#net, 'POST', '/api/v1/recovery/replay', { entries })).json()) as { headSeq: number; replayed: number };
+      sent += r.replayed;
+      after = r.headSeq;
+    }
+    await this.pull(); // clears SERVER_BEHIND once the server has caught up
+    return sent;
+  }
+
   async localExport(passphrase: string): Promise<{ filename: string; body: string }> {
     const entries = await this.#db.events.orderBy('serverSeq').toArray();
     const { json, csv, upToSeq } = buildRecoveryExport(entries, {
@@ -221,7 +238,7 @@ export class SyncEngine {
   async #pushLoop(): Promise<void> {
     let appended = false;
     for (;;) {
-      if (!this.#session || this.#state.alert === 'DEVICE_REVOKED' || this.#state.alert === 'SIGNED_OUT') break;
+      if (!this.#session || this.#state.alert === 'DEVICE_REVOKED' || this.#state.alert === 'SIGNED_OUT' || this.#state.alert === 'SERVER_BEHIND') break;
       const batch: OutboxItem[] = [];
       let bytes = 0;
       for (const item of this.#outbox) {
@@ -234,7 +251,9 @@ export class SyncEngine {
       await this.#setItems(batch.map((i) => ({ ...i, state: 'sending' })));
       let res: { results: ({ eventId: string; status: 'appended' | 'duplicate'; serverSeq: number } | { eventId: string; status: 'refused'; code: string })[] };
       try {
-        res = await (await request(this.#net, 'POST', '/api/v1/events', { deviceId: this.#meta.deviceId, events: batch.map((i) => i.event) })).json();
+        res = await (
+          await request(this.#net, 'POST', '/api/v1/events', { deviceId: this.#meta.deviceId, events: batch.map((i) => i.event) }, { 'x-wdb-known-seq': String(this.#meta.lastServerSeq) })
+        ).json();
       } catch (e) {
         await this.#setItems(batch.map((i) => ({ ...i, state: 'queued' })));
         await this.#onFailure(e);
@@ -259,6 +278,7 @@ export class SyncEngine {
 
   async #onFailure(e: unknown): Promise<void> {
     if (e instanceof ApiError && e.code === 'DEVICE_REVOKED') return this.#wipe();
+    if (e instanceof ApiError && e.code === 'SERVER_BEHIND') return this.#set({ online: true, alert: 'SERVER_BEHIND' }); // no retry until a pull clears it
     if (e instanceof ApiError && e.code === 'NO_SESSION') {
       this.#session = null;
       await this.#db.session.delete('current');
@@ -288,7 +308,7 @@ export class SyncEngine {
   async pull(): Promise<void> {
     if (!this.#session || this.#state.alert === 'CHAIN_FORK') return;
     for (;;) {
-      let page: { entries: LedgerEntry[]; disabledStaff?: string[] };
+      let page: { headSeq: number; headHash: string; entries: LedgerEntry[]; disabledStaff?: string[] };
       try {
         page = await (await request(this.#net, 'GET', `/api/v1/events?after=${this.#meta.lastServerSeq}&limit=${PAGE}`)).json();
       } catch (e) {
@@ -298,6 +318,13 @@ export class SyncEngine {
       }
       const wasOffline = !this.#state.online;
       this.#set({ online: true });
+      // §11.4: a server behind this tablet was restored from an old backup. Stop pushing until the log is replayed.
+      if (page.headSeq < this.#meta.lastServerSeq) return this.#set({ alert: 'SERVER_BEHIND' });
+      if (page.headSeq === this.#meta.lastServerSeq && page.headHash !== this.#meta.headHash) return this.#set({ alert: 'CHAIN_FORK' });
+      if (this.#state.alert === 'SERVER_BEHIND') {
+        this.#set({ alert: null });
+        void this.push();
+      }
       if (wasOffline) void this.push(); // back in contact: send what queued up, without waiting for the backoff timer
       // §9.2.3: staff disabled on the server lose offline sign-in on this device.
       if (page.disabledStaff?.length) await this.#db.creds.bulkDelete(page.disabledStaff);
@@ -379,6 +406,7 @@ export class SyncEngine {
           this.#set({ online: false });
         } else if (res.body) {
           this.#set({ online: true });
+          void this.pull(); // also notices a server restored from an old backup (§11.4)
           void this.push(); // §5.6: push immediately when the stream opens
           await this.#read(res.body);
         }

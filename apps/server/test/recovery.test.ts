@@ -137,3 +137,56 @@ describe('export:decrypt CLI', () => {
     expect(() => decryptToFiles(file, PASS)).toThrow(/odd file name/);
   });
 });
+
+describe('POST /api/v1/recovery/replay (design.md §11.4)', () => {
+  // A server restored from an old backup: the log is cut back, but devices, staff and sessions are still there.
+  async function restoredTo(seq: number): Promise<void> {
+    await owner.query('ALTER TABLE events DISABLE TRIGGER events_append_only');
+    try {
+      await owner.query('DELETE FROM events WHERE server_seq > $1', [seq]);
+    } finally {
+      await owner.query('ALTER TABLE events ENABLE TRIGGER events_append_only');
+    }
+    await owner.query("UPDATE log_head SET last_seq = $1, last_hash = COALESCE((SELECT hash FROM events WHERE server_seq = $1), decode(repeat('00', 32), 'hex'))", [seq]);
+  }
+  const replay = (entries: object[]) => as('admin', 'POST', '/api/v1/recovery/replay', { entries });
+  async function fourEntries() {
+    await push([signed(d, 'WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'Bed 1' }, { bedId: 'B02', label: 'Bed 2' }] }, { staffId: 'S-0004' }), admitOn(d, 1, { staffId: 'S-0004' }), admitOn(d, 2, { staffId: 'S-0004' }), admitOn(d, 3, { staffId: 'S-0004' })]);
+    return (await app.inject({ method: 'GET', url: '/api/v1/events?after=0', headers: { cookie: cookie.admin ?? '' } })).json() as { headSeq: number; headHash: string; entries: { serverSeq: number }[] };
+  }
+
+  it('puts back the entries a restored server lost, verbatim, so every hash matches again', async () => {
+    const before = await fourEntries();
+    await restoredTo(1);
+    const r = await replay(before.entries.slice(1));
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ headSeq: 4, headHash: before.headHash, replayed: 3 });
+    const after = (await app.inject({ method: 'GET', url: '/api/v1/events?after=0', headers: { cookie: cookie.admin ?? '' } })).json();
+    expect(after.entries).toEqual(before.entries);
+    expect((await actions()).filter((a) => a.action === 'RECOVERY_REPLAY')).toEqual([{ action: 'RECOVERY_REPLAY', code: '3' }]);
+    // Entries the server already has are skipped, so replaying twice is harmless.
+    expect((await replay(before.entries)).json()).toMatchObject({ headSeq: 4, replayed: 0 });
+  });
+
+  it('refuses entries that do not chain from the server head, or whose content does not match its hash', async () => {
+    const before = await fourEntries();
+    await restoredTo(1);
+    expect(code(await replay(before.entries.slice(2)))).toEqual([409, 'CHAIN_MISMATCH']); // a gap
+    const [e2, ...rest] = before.entries.slice(1) as unknown as { event: { payload: Record<string, unknown> } }[];
+    const forged = { ...e2, event: { ...e2?.event, payload: { ...e2?.event.payload, label: 'Forged' } } };
+    expect(code(await replay([forged, ...rest]))).toEqual([409, 'CHAIN_MISMATCH']);
+    // Signature still valid, only the server time edited: the hash catches it.
+    const retimed = { ...(before.entries[1] as object), serverTime: '2026-01-01T00:00:00.000Z' };
+    expect(code(await replay([retimed, ...before.entries.slice(2)]))).toEqual([409, 'CHAIN_MISMATCH']);
+    expect((await owner.query('SELECT last_seq FROM log_head')).rows[0].last_seq).toBe('1'); // nothing applied
+    expect(code(await as('charge', 'POST', '/api/v1/recovery/replay', { entries: [] }))).toEqual([403, 'ROLE_FORBIDDEN']);
+  });
+
+  it('a tablet that knows more than the server cannot push until the log is replayed (SERVER_BEHIND)', async () => {
+    await fourEntries();
+    await restoredTo(1);
+    const r = await app.inject({ method: 'POST', url: '/api/v1/events', headers: { ...CSRF, cookie: cookie.admin ?? '', 'x-wdb-known-seq': '4' }, payload: { deviceId: d.deviceId, events: [admitOn(d, 9, { staffId: 'S-0004' })] } });
+    expect(code(r)).toEqual([409, 'SERVER_BEHIND']);
+    expect((await owner.query('SELECT last_seq FROM log_head')).rows[0].last_seq).toBe('1');
+  });
+});
