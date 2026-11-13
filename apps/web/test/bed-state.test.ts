@@ -52,6 +52,10 @@ describe('cardName', () => {
     );
     expect(cardName('Bed 4', { kind: 'conflict', count: 2 }, t)).toBe('Bed 4, conflict: 2 patients, 2 tasks, 1 overdue, charge nurse must choose');
     expect(cardName('Bed 4', { kind: 'empty' }, { open: 0, overdue: 0 })).toBe('Bed 4, empty');
+    expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: false }, t, 2)).toBe(
+      'Bed 4, Rowan Ashby, 2 tasks, 1 overdue, 2 notes, confirmed',
+    );
+    expect(cardName('Bed 4', { kind: 'empty' }, undefined, 1)).toBe('Bed 4, empty, 1 note');
   });
 });
 

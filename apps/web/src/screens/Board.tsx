@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { looksLikeIdentifier, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, FILTERS, matches, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
+import { cardName, cardState, FILTERS, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'], string> = {
@@ -23,14 +23,15 @@ function useNow(): number {
   return now;
 }
 
-function BedCard({ label, state, tasks, onOpen }: { label: string; state: CardState; tasks: TaskSummary; onOpen: () => void }) {
+function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state: CardState; tasks: TaskSummary; notes: number; onOpen: () => void }) {
   const pending = (state.kind === 'occupied' && state.pending) || state.kind === 'pendingOut';
   const words = taskWords(tasks);
+  const [noteWord] = noteWords(notes);
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={cardName(label, state, tasks)}
+      aria-label={cardName(label, state, tasks, notes)}
       className={`flex min-h-28 flex-col items-start gap-1 rounded-lg p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-dashed' : ''}`}
     >
       {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
@@ -58,6 +59,8 @@ function BedCard({ label, state, tasks, onOpen }: { label: string; state: CardSt
           )}
         </span>
       )}
+      {noteWord && ' '}
+      {noteWord && <span className="text-text-muted">{noteWord}</span>}
       {pending && ' '}
       {pending && (
         <span className="font-semibold text-status-pending">
@@ -75,7 +78,7 @@ export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: S
   const now = useNow();
   const beds = Object.entries(s.view.beds)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now) }));
+    .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now), notes: notesFor(s.view, id).length }));
   const shown = beds.filter((b) => matches(filter, b.state));
   return (
     <main className="flex flex-col gap-4 p-4">
@@ -94,7 +97,7 @@ export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: S
       <ul className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
         {shown.map((b) => (
           <li key={b.id} className="grid">
-            <BedCard label={b.label} state={b.state} tasks={b.tasks} onOpen={() => setOpen(b.id)} />
+            <BedCard label={b.label} state={b.state} tasks={b.tasks} notes={b.notes} onOpen={() => setOpen(b.id)} />
           </li>
         ))}
       </ul>

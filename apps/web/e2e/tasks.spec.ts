@@ -61,7 +61,7 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   await expect(a.getByText('Family visiting after lunch')).toBeVisible();
   await a.keyboard.press('Escape');
 
-  await b.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' }).click({ timeout: 20_000 });
+  await b.getByRole('button', { name: 'Bed 1, Rowan Ashby, 1 note, confirmed' }).click({ timeout: 20_000 }); // the card counts the note
   await expect(b.getByText('Family visiting after lunch')).toBeVisible();
   await b.getByRole('button', { name: 'Discharge' }).click();
   await b.getByRole('dialog').getByRole('button', { name: 'Discharge' }).click();
@@ -69,6 +69,8 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   await admit(b, 1, 'Mira Holt');
   await b.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click();
   await expect(b.getByText('No handoff notes for this bed.')).toBeVisible();
+  await b.keyboard.press('Escape');
+  await expect(b.getByRole('button', { name: /^Bed 1, Mira Holt, (pending|confirmed)/ })).toBeVisible(); // no note count for the new patient
 
   const c = await (await browser.newContext()).newPage();
   await setUpTablet(c, 'clerk', 'Tablet C');

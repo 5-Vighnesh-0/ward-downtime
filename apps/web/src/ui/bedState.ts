@@ -35,8 +35,11 @@ export function taskSummary(view: Board, bedId: string, now: number): TaskSummar
 export const taskWords = (t: TaskSummary | undefined): string[] =>
   !t || t.open === 0 ? [] : [`${t.open} ${t.open === 1 ? 'task' : 'tasks'}`, ...(t.overdue ? [`${t.overdue} overdue`] : [])];
 
-export function cardName(bedLabel: string, s: CardState, tasks?: TaskSummary): string {
-  const t = taskWords(tasks).map((w) => `, ${w}`).join('');
+/** "2 notes": handoff notes for the current occupant (notesFor), shown on the card like tasks. */
+export const noteWords = (n: number): string[] => (n === 0 ? [] : [`${n} ${n === 1 ? 'note' : 'notes'}`]);
+
+export function cardName(bedLabel: string, s: CardState, tasks?: TaskSummary, notes = 0): string {
+  const t = [...taskWords(tasks), ...noteWords(notes)].map((w) => `, ${w}`).join('');
   switch (s.kind) {
     case 'empty':
       return `${bedLabel}, empty${t}`;
