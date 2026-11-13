@@ -1166,7 +1166,7 @@ Copy rules: verbs on buttons, name the patient and bed in confirmations, no "Are
 | `backup` | `wdb/server` image, command `wdb backup --loop 15m` | `db` | none | writes encrypted files to `/backups` |
 | `toxiproxy` | test profile only | `edge` | test only | not in production profile |
 
-Secrets (Docker secrets files under `/etc/wdb/secrets`, mode 0400, never in images or git): `db_owner_password`, `db_app_password`, `backup_key`, `step_ca_password`.
+Secrets (Docker secrets files under `/etc/wdb/secrets`: directory 0700, files 0644 so non-root containers can read their bind mount; never in images or git): `db_owner_password`, `db_app_password`, `backup_key`, `step_ca_password`.
 
 As built (M5a, `compose.yaml`): a one-shot `migrate` service applies migrations as the owner and sets the app role's password; a one-shot `ca-root` copies only step-ca's public root into a volume Caddy reads, so the proxy never sees the CA's keys. Caddy runs as root inside its container with every capability dropped except `NET_BIND_SERVICE` (`shortcut:` move to a non-root user once its data volume is owned by that user). The server trusts exactly one proxy hop, so rate limits key on the tablet's address. The test database is behind the `test` profile. `backup` and `toxiproxy` come with M5b.
 

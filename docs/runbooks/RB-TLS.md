@@ -22,7 +22,7 @@ Do this before any outage (design.md §11.2). Commands run from the repo root on
 - The root CA is made on an offline laptop (`step ca init`), and its key stays offline. Only the intermediate key
   and its password go on the server. Replace the demo `step-ca` volume with that setup before go-live.
 - Set `WDB_HOST` to the ward name (e.g. `wdb.ward-a.hospital.internal`, a placeholder), `WDB_BIND` to the
-  server's LAN address, and keep secrets in `/etc/wdb/secrets` (mode 0400) via `WDB_SECRETS_DIR`.
+  server's LAN address, and keep secrets in `/etc/wdb/secrets` (directory 0700, files 0644, since the containers read them as their own non-root users) via `WDB_SECRETS_DIR`.
 - DNS: an A record in hospital DNS **and** a hosts entry or MDM DNS override on every tablet.
 - Push the root to tablets with MDM. On iPadOS install the profile **and** turn on full trust in
   Settings → General → About → Certificate Trust Settings.
