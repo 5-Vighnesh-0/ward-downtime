@@ -1,4 +1,4 @@
-// SEC-T-ALERT, SEC-T-LOGS: SEC-28 clock skew, SEC-20 health and alerts, design.md §13.1 log redaction.
+// SEC-T-ALERT, SEC-T-LOGS, INT-SKEW: SEC-28 clock skew, SEC-20 health and alerts, design.md §13.1 log redaction.
 import { Writable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import pg from 'pg';

@@ -96,12 +96,12 @@ prd.md defines FR-1 to FR-15. security.md defines SEC-1 to SEC-31. prd.md §6 NF
 | SEC-22 | CSRF protection; secure cookies | §9.4.2 | SEC-T-CSRF |
 | SEC-23 | Rate/payload limits on sync; backpressure | §5.7 | SEC-T-SIZE, FI-04 |
 | SEC-24 | Pinned deps, lockfile, minimal deps, subresource-free build | §9.8, §9.3 (no CDN) | CI job `deps` |
-| SEC-25 | Non-root, read-only FS, no secrets in images | §11.1 | Trivy + compose lint |
-| SEC-26 | Network segmentation; no inbound internet; outbound blocked | §11.1 | Runbook RB-NET check |
+| SEC-25 | Non-root, read-only FS, no secrets in images | §11.1 | Trivy (Dockerfile misconfig, both images), gitleaks; compose hardening by review: every long-running service uses the `x-hardened` anchor. Documented exception: Caddy runs as root in its container (capabilities dropped except `NET_BIND_SERVICE`). No compose linter runs |
+| SEC-26 | Network segmentation; no inbound internet; outbound blocked | §11.1 | `deploy/nftables-ward.conf` + RB-NET checks (docs/runbooks/RB-NET.md) |
 | SEC-27 | Restore-tested backups; ransomware-on-server recovery | §11.3, §11.4 | Restore drill, SIM-04 |
-| SEC-28 | NTP on server; clock skew detected and shown | §5.8 | INT-SKEW |
+| SEC-28 | NTP on server; clock skew detected and shown | §5.8 | INT-SKEW (`monitor.test.ts`); NTP set up in RB-NET |
 | SEC-29 | CI: lint, types, tests, gitleaks, Semgrep, audit, Trivy, CycloneDX | §9.8 | CI pipeline |
-| SEC-30 | Threat model and security.md updated per architecture change | §9.1, §9.8 (PR template) | PR checklist |
+| SEC-30 | Threat model and security.md updated per architecture change | §9.1, §9.8 (PR template) | PR checklist (`.github/pull_request_template.md`) |
 | SEC-31 | Security tests: bypass, escalation, replay, forged sig, oversize, tamper | §12.6 | SEC-T-* suite |
 
 ### 2.3 Non-functional requirements (prd.md §6)
@@ -1180,7 +1180,7 @@ Secrets (Docker secrets files under `/etc/wdb/secrets`: directory 0700, files 06
 
 As built (M5a, `compose.yaml`): a one-shot `migrate` service applies migrations as the owner and sets the app role's password; a one-shot `ca-root` copies only step-ca's public root into a volume Caddy reads, so the proxy never sees the CA's keys. Caddy runs as root inside its container with every capability dropped except `NET_BIND_SERVICE` (`shortcut:` move to a non-root user once its data volume is owned by that user). The server trusts exactly one proxy hop, so rate limits key on the tablet's address. The test database is behind the `test` profile. `backup` and `toxiproxy` come with M5b.
 
-Host network policy (SEC-26), set with nftables on the host:
+Host network policy (SEC-26), set with nftables on the host (`deploy/nftables-ward.conf`, steps and checks in RB-NET). Docker diverts published ports before the host's input chain, so the ruleset also filters the forward hook, ahead of Docker's own rules:
 - Inbound: allow 443/80 from the ward VLAN, 22 from the IT jump host. Deny everything else.
 - Outbound: allow UDP 123 to the hospital NTP server and TCP to the backup target. Deny everything else, including the internet.
 

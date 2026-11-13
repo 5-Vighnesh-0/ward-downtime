@@ -36,7 +36,7 @@ TypeScript, React 19 PWA (IndexedDB), Fastify, PostgreSQL, Caddy with a local CA
 - [security.md](security.md): threat model and controls
 - [design.md](design.md): architecture and build plan
 - [TESTING.md](TESTING.md), [DATA_POLICY.md](DATA_POLICY.md), [GLOSSARY.md](GLOSSARY.md)
-- Runbooks: [TLS and first setup](docs/runbooks/RB-TLS.md), [backup and restore](docs/runbooks/RB-BACKUP.md), [alerts](docs/runbooks/alerts.md)
+- Runbooks: [TLS and first setup](docs/runbooks/RB-TLS.md), [network isolation](docs/runbooks/RB-NET.md), [backup and restore](docs/runbooks/RB-BACKUP.md), [alerts](docs/runbooks/alerts.md)
 - [docs/security/asvs-l2.md](docs/security/asvs-l2.md): OWASP ASVS 5.0.0 L2 and Top 10:2025 self-review
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CLAUDE.md](CLAUDE.md) (rules for AI agents)
 

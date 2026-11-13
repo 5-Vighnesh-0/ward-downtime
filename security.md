@@ -93,7 +93,7 @@ Use STRIDE per component (client, sync API, server, database, export, deploy) an
 ## 6. Verification checklist
 
 - [x] Threat model (STRIDE) written and reviewed (design.md §9.1; developer self-review 2026-11-12 in docs/security/asvs-l2.md §3)
-- [ ] All SEC items mapped to a test or a documented decision
+- [x] All SEC items mapped to a test or a documented decision (design.md §2 table; SEC-25 compose hardening and the Caddy root exception are documented decisions; SEC-26 in RB-NET)
 - [x] Penetration-style tests for SEC-31 pass (automated SEC-T suite, map in design.md §12.7; not an external pentest)
 - [x] Hash chain verification tool run on a sample log (100,300-event restore drill, docs/runbooks/RB-BACKUP.md)
 - [x] No real-looking identifiers in repo (CI check green: `pnpm check:synthetic` in the `quality` job)

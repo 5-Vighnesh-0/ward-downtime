@@ -26,7 +26,7 @@ Do this before any outage (design.md §11.2). Commands run from the repo root on
 - DNS: an A record in hospital DNS **and** a hosts entry or MDM DNS override on every tablet.
 - Push the root to tablets with MDM. On iPadOS install the profile **and** turn on full trust in
   Settings → General → About → Certificate Trust Settings.
-- Postgres data lives on the host's encrypted (LUKS) disk (§9.9). Host firewall rules: §11.1.
+- Postgres data lives on the host's encrypted (LUKS) disk (§9.9). Host firewall rules: [RB-NET](RB-NET.md).
 
 ## Check (every quarterly drill)
 
