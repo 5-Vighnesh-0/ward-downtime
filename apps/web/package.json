@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -p .",
     "test": "vitest run",
+    "test:sim": "vitest run test/sim.test.ts",
     "e2e": "playwright test",
     "e2e:faults": "playwright test -c playwright.faults.config.ts"
   },

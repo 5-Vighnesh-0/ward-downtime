@@ -140,6 +140,7 @@ describe('two tablets (§6.6, FR-5, NFR-Convergence)', () => {
     const a = await another();
     const b = await another();
     b.net.blockPush = true;
+    const before = await b.engine.admit({ label: 'Ines Varga', bedId: 'B02' });
     const mine = await b.engine.admit({ label: 'Mira Holt', bedId: 'B01' });
     await a.engine.admit({ label: 'Rowan Ashby', bedId: 'B01' });
     await a.engine.push();
@@ -147,6 +148,11 @@ describe('two tablets (§6.6, FR-5, NFR-Convergence)', () => {
     // No phantom conflict: B sees A's confirmed patient and its own change as blocked.
     expect(b.engine.state.view.beds.B01).toMatchObject({ status: 'occupied' });
     expect(b.engine.state.blocked).toEqual([mine.eventId]);
+    // Pending changes before and after the blocked one still show.
+    const after = await b.engine.admit({ label: 'Tomas Reyes', bedId: 'B03' });
+    expect(b.engine.state.blocked).toEqual([mine.eventId]);
+    expect(b.engine.state.view.beds.B02).toMatchObject({ status: 'occupied', occupant: (before.event.payload as { patientId: string }).patientId });
+    expect(b.engine.state.view.beds.B03).toMatchObject({ status: 'occupied', occupant: (after.event.payload as { patientId: string }).patientId });
     b.net.blockPush = false;
     await b.engine.push();
     await a.engine.pull();

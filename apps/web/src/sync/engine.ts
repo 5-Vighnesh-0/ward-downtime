@@ -511,14 +511,21 @@ export class SyncEngine {
     // Pending events go on top of the confirmed board in deviceSeq order, with provisional sequence numbers.
     // One that would not apply (for example the bed was taken meanwhile) is left out of the view instead of
     // showing a conflict the server has not ordered yet (§6.6: no phantom conflicts).
+    // Each replay copies the board, which keeps an outcome per logged event, so replay the pending events in one go
+    // and replay again only around one that did not apply (SIM-01 found one replay per event too slow).
     let view = this.#confirmed;
-    let seq = view.atSeq;
     const blocked: string[] = [];
-    for (const item of this.#outbox) {
-      if (item.state === 'refused') continue;
-      const next = replay([{ serverSeq: ++seq, event: item.event }], view);
-      if (next.outcomes[item.eventId]?.kind === 'applied') view = next;
-      else blocked.push(item.eventId);
+    let rest = this.#outbox.filter((i) => i.state !== 'refused').map((i, n) => ({ serverSeq: view.atSeq + 1 + n, event: i.event }));
+    while (rest.length) {
+      const next = replay(rest, view);
+      const bad = rest.findIndex((e) => next.outcomes[e.event.eventId]?.kind !== 'applied');
+      if (bad < 0) {
+        view = next;
+        break;
+      }
+      if (bad > 0) view = replay(rest.slice(0, bad), view);
+      blocked.push(rest[bad]?.event.eventId ?? '');
+      rest = rest.slice(bad + 1);
     }
     return {
       view,

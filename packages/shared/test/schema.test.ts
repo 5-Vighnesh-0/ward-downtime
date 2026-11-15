@@ -53,6 +53,10 @@ describe('EventSchema', () => {
     expect(ok(ward(...beds.slice(0, 60)))).toBe(true);
     expect(ok(ward(...beds))).toBe(false); // > 60 beds
     expect(ok(ev('RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: [] }))).toBe(false);
+    // SIM-01 made an 11-candidate conflict; up to 50 must be resolvable, and 50 still fits in 4 KiB.
+    const seen = Array.from({ length: 51 }, () => admit().eventId);
+    expect(ok(ev('RESOLVE_CONFLICT', { conflictId: 'C-1', keep: seen[0] ?? 'NONE', candidatesSeen: seen.slice(0, 50) }))).toBe(true);
+    expect(ok(ev('RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: seen }))).toBe(false);
   });
 
   it('accepts an idle lock time of 1–15 whole minutes on WARD_CONFIGURED', () => {

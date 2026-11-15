@@ -62,7 +62,8 @@ export const ResolveConflictEvent = event(
   z.strictObject({
     conflictId: z.string().regex(/^C-[0-9]+$/),
     keep: z.union([z.uuid(), z.literal('NONE')]),
-    candidatesSeen: z.array(z.uuid()).min(1).max(10),
+    // 50, not 10: SIM-01 made an 11-candidate conflict that could not be resolved. 50 IDs still fit in 4 KiB.
+    candidatesSeen: z.array(z.uuid()).min(1).max(50),
   }),
 );
 

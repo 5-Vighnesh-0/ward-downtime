@@ -43,7 +43,7 @@ Order matters. Tick items when tests pass. IDs refer to `prd.md` and `security.m
 - [x] Backup/restore drill, runbooks (SEC-27), recovery replay from a device (design.md §11.4) (M5b)
 - [ ] Accessibility pass. A11Y-01 axe and A11Y-02 keyboard done (M5c); manual VoiceOver and NVDA pass needs devices
 - [x] Nightly random-seed property runs at 20,000 (`.github/workflows/nightly.yml`)
-- [ ] SIM-01/02 as named simulations
+- [x] SIM-01/02 as named simulations (`apps/web/test/sim.test.ts`; found the 10-candidate resolve cap and a slow view rebuild)
 
 ## M6: v2
 - [x] Tasks tied to beds (FR-15), with the OQ-8 free-text policy (M6a)
