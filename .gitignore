@@ -14,3 +14,7 @@ apps/web/e2e/.tls/
 apps/web/test-results/
 apps/web/playwright-report/
 deploy/secrets/
+
+# Brainstorm mockups and design-check settings (local only)
+.superpowers/
+.impeccable/
