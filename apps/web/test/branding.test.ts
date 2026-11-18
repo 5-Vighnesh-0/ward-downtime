@@ -1,6 +1,6 @@
 // FR-16: the tablet keeps the ward's branding, so the board still looks right with the server down.
 import { afterEach, describe, expect, it } from 'vitest';
-import { refreshBranding, loadBranding, NO_BRANDING } from '../src/ui/branding.ts';
+import { refreshBranding, loadBranding, NO_BRANDING, safeAccent } from '../src/ui/branding.ts';
 import { startWard, tablet, type Tablet, type Ward } from './support.ts';
 
 let ward: Ward;
@@ -8,6 +8,15 @@ let t: Tablet;
 afterEach(async () => {
   t?.engine.stop();
   await ward?.close();
+});
+
+describe('safeAccent', () => {
+  it('keeps readable colours and drops light or malformed ones', () => {
+    expect(safeAccent('#0e7490')).toBe('#0e7490');
+    expect(safeAccent('#ffff00')).toBeNull();
+    expect(safeAccent('teal')).toBeNull();
+    expect(safeAccent(null)).toBeNull();
+  });
 });
 
 describe('branding on the tablet', () => {
