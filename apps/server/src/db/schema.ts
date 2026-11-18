@@ -126,3 +126,24 @@ export const exports = pgTable('exports', {
   encrypted: boolean('encrypted').notNull(),
   sha256: bytea('sha256').notNull(),
 });
+
+// Hospital branding and display-only bays (spec 2026-11-18 §1.4, FR-16; approved 2026-11-18). One row; never in the
+// event log, so it cannot change replay or the hash chain.
+export const wardSettings = pgTable(
+  'ward_settings',
+  {
+    id: smallint('id').primaryKey(),
+    hospitalName: text('hospital_name'),
+    accent: text('accent'),
+    logo: bytea('logo'),
+    logoType: text('logo_type'),
+    bays: jsonb('bays'),
+    updatedAt: tstz('updated_at').notNull().defaultNow(),
+    updatedBy: text('updated_by').references(() => staff.staffId),
+  },
+  (t) => [
+    check('ward_settings_singleton', sql`${t.id} = 1`),
+    check('ward_settings_logo_size', sql`octet_length(${t.logo}) <= 204800`),
+    check('ward_settings_logo_type', sql`${t.logoType} IN ('image/png', 'image/jpeg')`),
+  ],
+);

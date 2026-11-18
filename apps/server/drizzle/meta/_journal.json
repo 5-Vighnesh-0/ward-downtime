@@ -29,6 +29,20 @@
       "when": 1794513217970,
       "tag": "0003_exports_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795037612961,
+      "tag": "0004_ward_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795037614318,
+      "tag": "0005_ward_settings_grants",
+      "breakpoints": true
     }
   ]
 }
