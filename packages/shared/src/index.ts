@@ -4,3 +4,4 @@ export * from './canonical.ts';
 export * from './roles.ts';
 export * from './hlc.ts';
 export * from './export.ts';
+export * from './branding.ts';
