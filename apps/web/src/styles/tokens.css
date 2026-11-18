@@ -1,8 +1,8 @@
 /* Semantic tokens (design.md §10.7, clinical calm per spec 2026-11-18 §1.1). Every status also has an icon and text, never colour alone. */
 @import 'tailwindcss';
 
-/* Clinical calm (spec 2026-11-18 §1.1). Contrast: text on page 15.2:1, muted on page 6.4:1, border on page 3.2:1
-   (WCAG 1.4.11), pending on white 7.4:1, conflict on white 6.6:1. The accent is the hospital's colour, set at run time
+/* Clinical calm (spec 2026-11-18 §1.1). Contrast: text on page 14.3:1, muted on page 6.7:1, border on page 3.2:1
+   (WCAG 1.4.11), pending on white 7.7:1, conflict on white 6.6:1. The accent is the hospital's colour, set at run time
    by applyAccent() and always at least 4.5:1 on white. Status also has an icon and text, never colour alone. */
 @theme {
   --color-page: #f6f5f1;
