@@ -82,7 +82,7 @@ export function EnrollScreen(p: { db: WdbDb; net: Net; onApproved: () => void })
 }
 
 /** Online sign-in when the ward server answers; otherwise the offline PIN verifier (SEC-7). */
-async function signInAnywhere(db: WdbDb, net: Net, staffId: string, pin: string): Promise<string | null> {
+export async function signInAnywhere(db: WdbDb, net: Net, staffId: string, pin: string): Promise<string | null> {
   try {
     const s = await signIn(db, net, staffId, pin);
     await saveCred(db, s, pin);
@@ -92,7 +92,10 @@ async function signInAnywhere(db: WdbDb, net: Net, staffId: string, pin: string)
       if (e.code === 'ACCOUNT_LOCKED') return copy.locked;
       if (e.code === 'SIGNIN_PAUSED') return copy.paused;
       if (e.code === 'DEVICE_REVOKED') return copy.revoked;
-      return copy.wrongPinOnline;
+      // The server is up but cannot verify this tablet; an offline sign-in would be signed out again at once.
+      if (e.code === 'DEVICE_SIG_INVALID') return copy.deviceSigInvalid;
+      // The server did not check the PIN (a proxy in front of a stopped server, or its database is down): offline check.
+      if (e.status < 500 && !e.code.startsWith('HTTP_')) return copy.wrongPinOnline;
     }
   }
   const r = await checkOffline(db, staffId, pin, Date.now());

@@ -109,6 +109,7 @@ describe('POST /api/v1/events', () => {
       signed(A, 'RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: [crypto.randomUUID()] }, { staffId });
     const configure = (staffId: string) => signed(A, 'WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'Bed 1' }] }, { staffId });
     await addStaff(pool, 'S-0005', 'charge', 'disabled');
+    for (const s of ['S-0002', 'S-0003', 'S-0004', 'S-0005']) await sessionCookie(pool, s, A.deviceId); // each has signed in on A
     expect(
       statuses(
         await push(A, [
@@ -123,6 +124,18 @@ describe('POST /api/v1/events', () => {
         ]),
       ),
     ).toEqual(['ROLE_FORBIDDEN', 'ROLE_FORBIDDEN', 'appended', 'ROLE_FORBIDDEN', 'appended', 'appended', 'ROLE_FORBIDDEN', 'ROLE_FORBIDDEN']);
+  });
+
+  it('refuses an event made out for staff who never signed in on this tablet (a modified client borrowing a role)', async () => {
+    const configure = (staffId: string) => signed(A, 'WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'Bed 1' }] }, { staffId });
+    expect(statuses(await push(A, [configure('S-0004')]))).toEqual(['STAFF_NOT_ON_DEVICE']); // the admin never used tablet A
+    await sessionCookie(pool, 'S-0004', A.deviceId);
+    expect(statuses(await push(A, [configure('S-0004')]))).toEqual(['appended']);
+    // After a restore there are no sessions; the SIGNIN_OK audit rows from the backup still count.
+    await owner.query("DELETE FROM sessions WHERE staff_id = 'S-0003'");
+    await owner.query("INSERT INTO audit_log (staff_id, device_id, action, outcome, request_id) VALUES ('S-0003', $1, 'SIGNIN_OK', 'ok', 't')", [A.deviceId]);
+    expect(statuses(await push(A, [signed(A, 'RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: [crypto.randomUUID()] }, { staffId: 'S-0003' })]))).toEqual(['appended']);
+    expect(statuses(await push(B, [signed(B, 'RESOLVE_CONFLICT', { conflictId: 'C-1', keep: 'NONE', candidatesSeen: [crypto.randomUUID()] }, { staffId: 'S-0003' })]))).toEqual(['STAFF_NOT_ON_DEVICE']);
   });
 
   it('refuses a deviceSeq that does not increase (local data loss signal)', async () => {
@@ -144,10 +157,12 @@ describe('POST /api/v1/events', () => {
 
   it('takes handoff notes from clinical staff only (FR-15, SEC-6)', async () => {
     const note = (staffId: string) => signed(A, 'HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Family visiting at 2' }, { staffId });
+    for (const s of ['S-0002', 'S-0003']) await sessionCookie(pool, s, A.deviceId);
     expect(statuses(await push(A, [note('S-0001'), note('S-0002'), note('S-0003')]))).toEqual(['ROLE_FORBIDDEN', 'appended', 'appended']); // clerk, nurse, charge
   });
 
   it('takes tasks from any role, but refuses a title that looks like an identifier (FR-15, SEC-16)', async () => {
+    await sessionCookie(pool, 'S-0002', A.deviceId);
     const ok = signed(A, 'TASK_CREATED', { bedId: 'B01', title: 'Bed needs cleaning' }, { staffId: 'S-0001' }); // clerk
     const bad = signed(A, 'TASK_CREATED', { bedId: 'B01', title: `MRN ${'1234567'}` } /* built at runtime: no MRN-shaped text in the repo */, { staffId: 'S-0002' });
     const doneIt = signed(A, 'TASK_COMPLETED', { taskId: ok.eventId }, { staffId: 'S-0002' }); // nurse

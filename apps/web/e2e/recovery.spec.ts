@@ -57,7 +57,9 @@ test('E2E-06: the recovery export holds applied changes only, with original tabl
   }
   const csv = (files['recovery.csv'] ?? '').split('\r\n');
   expect(csv[0]).toMatch(/^# SYNTHETIC DATA - CONFIDENTIAL - WARD DOWNTIME RECOVERY EXPORT - upToSeq=\d+$/);
-  expect(csv.filter((l) => l.includes('Rowan Ashby'))).toEqual([]);
+  // Rowan has no event row; the closing note says Rowan is unplaced, so the EHR does not put Rowan in a bed.
+  expect(csv.filter((l) => l.includes('Rowan Ashby'))).toEqual([expect.stringMatching(/^# unplaced,T-[A-Z0-9]{3}-\d{4},Rowan Ashby,not kept in any bed$/)]);
+  expect(r.unplaced).toEqual([expect.objectContaining({ label: 'Rowan Ashby', lastBedId: null })]);
   await expect(a.getByText(/^Saved recovery-\d+\.wdbx\./)).toBeVisible();
 
   // Server down: the same export is built from the tablet's own copy of the log.

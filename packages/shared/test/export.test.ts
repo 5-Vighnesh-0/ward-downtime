@@ -35,7 +35,8 @@ describe('buildRecoveryExport', () => {
     const lines = csv.trimEnd().split('\r\n');
     expect(lines[0]).toBe('# SYNTHETIC DATA - CONFIDENTIAL - WARD DOWNTIME RECOVERY EXPORT - upToSeq=7');
     expect(lines[1]).toBe('serverSeq,eventId,type,patientId,label,bedId,fromBedId,toBedId,clientTime,serverTime,deviceLabel,staffId');
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5); // 2 rows, then the patient who lost the conflict
+    expect(lines[4]).toBe('# unplaced,T-K3P-0001,Rowan Ashby,not kept in any bed');
   });
 
   it('lists open conflicts so the export is known to be incomplete', () => {
@@ -68,7 +69,46 @@ describe('buildRecoveryExport', () => {
 
   it('an empty log exports an empty, valid file', () => {
     const r = JSON.parse(buildRecoveryExport([], opts).json);
-    expect(r).toMatchObject({ upToSeq: 0, headHash: '0'.repeat(64), events: [], openConflicts: [] });
+    expect(r).toMatchObject({ upToSeq: 0, headHash: '0'.repeat(64), events: [], openConflicts: [], unplaced: [] });
+  });
+
+  it('lists patients left unplaced, with the last bed the rows show them in, so the EHR does not keep them there', () => {
+    // A transfer that loses a conflict has already emptied the old bed; the applied ADMIT alone would say B01.
+    const a = ev('ADMIT', { patientId: 'T-K3P-0001', label: 'Rowan Ashby', bedId: 'B01' }, { device: DEVICE.A });
+    const b = ev('ADMIT', { patientId: 'T-M7Q-0001', label: 'Imani Calloway', bedId: 'B02' }, { device: DEVICE.B, basedOn: 1 });
+    const move = ev('TRANSFER', { patientId: 'T-K3P-0001', fromBedId: 'B01', toBedId: 'B02' }, { device: DEVICE.A, basedOn: 2 });
+    const keepB = ev('RESOLVE_CONFLICT', { conflictId: 'C-4', keep: b.eventId, candidatesSeen: [b.eventId, move.eventId] });
+    // A first occupant who loses a conflict was never kept in a bed.
+    const c = ev('ADMIT', { patientId: 'T-K3P-0002', label: 'Mira Holt', bedId: 'B03' }, { device: DEVICE.A, basedOn: 4 });
+    const d = ev('ADMIT', { patientId: 'T-M7Q-0002', label: 'Ola Brandt', bedId: 'B03' }, { device: DEVICE.B, basedOn: 4 });
+    const keepD = ev('RESOLVE_CONFLICT', { conflictId: 'C-7', keep: d.eventId, candidatesSeen: [c.eventId, d.eventId] });
+    const { json, csv } = buildRecoveryExport(at([ward('B01', 'B02', 'B03'), a, b, move, keepB, c, d, keepD]), opts);
+    const r = JSON.parse(json);
+    expect(r.events.map((e: { type: string; patientId: string }) => `${e.type} ${e.patientId}`)).toEqual(['ADMIT T-K3P-0001', 'ADMIT T-M7Q-0001', 'ADMIT T-M7Q-0002']);
+    expect(r.unplaced).toEqual([
+      { patientId: 'T-K3P-0001', label: 'Rowan Ashby', lastBedId: 'B01' },
+      { patientId: 'T-K3P-0002', label: 'Mira Holt', lastBedId: null },
+    ]);
+    expect(csv.trimEnd().split('\r\n').slice(-2)).toEqual([
+      '# unplaced,T-K3P-0001,Rowan Ashby,no longer in B01',
+      '# unplaced,T-K3P-0002,Mira Holt,not kept in any bed',
+    ]);
+  });
+
+  it('ends the CSV with the open conflicts, which the JSON lists too', () => {
+    const a = ev('ADMIT', { patientId: 'T-K3P-0001', label: 'Rowan Ashby', bedId: 'B01' });
+    const b = ev('ADMIT', { patientId: 'T-M7Q-0001', label: 'Imani Calloway', bedId: 'B01' }, { device: DEVICE.B });
+    const { csv } = buildRecoveryExport(at([ward('B01'), a, b]), opts);
+    expect(csv.trimEnd().split('\r\n').at(-1)).toBe('# open conflict,C-3,B01,T-K3P-0001,Rowan Ashby,T-M7Q-0001,Imani Calloway');
+  });
+
+  it('escapes labels in the closing lines like in the rows (CSV injection guard)', () => {
+    const a = ev('ADMIT', { patientId: 'T-K3P-0001', label: 'Ash,=HYPERLINK("x")', bedId: 'B01' });
+    const b = ev('ADMIT', { patientId: 'T-M7Q-0001', label: '=1+1', bedId: 'B01' }, { device: DEVICE.B });
+    const keepB = ev('RESOLVE_CONFLICT', { conflictId: 'C-3', keep: b.eventId, candidatesSeen: [a.eventId, b.eventId] });
+    const { csv } = buildRecoveryExport(at([ward('B01'), a, b, keepB]), opts);
+    expect(csv.trimEnd().split('\r\n').at(-1)).toBe('# unplaced,T-K3P-0001,"Ash,=HYPERLINK(""x"")",not kept in any bed');
+    expect(csv).toContain(",'=1+1,"); // the kept patient's formula-like label is neutralised in its row too
   });
 });
 

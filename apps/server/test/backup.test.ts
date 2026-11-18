@@ -1,10 +1,13 @@
 // SEC-13, SEC-27: encrypted backups, restore into an empty database, retention (design.md §11.3).
 import { randomBytes } from 'node:crypto';
+import { chmodSync, mkdtempSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.ts';
-import { backupFileName, keep, openBackup, restoreDatabase, takeBackup } from '../src/backup.ts';
+import { backupFileName, backupOnce, keep, openBackup, restoreDatabase, takeBackup } from '../src/backup.ts';
 import { createDb } from '../src/db.ts';
 import { verifyChain } from '../src/verify-chain.ts';
 import { addDevice, addStaff, admitOn, APP_URL, CSRF, ORIGIN, OWNER_URL, reset, sessionCookie, signed, type TestDevice } from './support.ts';
@@ -51,8 +54,9 @@ describe('backup and restore', () => {
       expect(r).toMatchObject({ headSeq: 2 });
       const src = await verifyChain(app_.db);
       expect(await verifyChain(target.db)).toEqual(src); // same head seq and hash
-      // The BACKUP_DONE row is written after the snapshot, so the backup cannot contain it.
-      const count = async (p: pg.Pool, t: string) => (await p.query(`SELECT count(*)::int AS n FROM ${t}${t === 'audit_log' ? " WHERE action <> 'BACKUP_DONE'" : ''}`)).rows[0].n;
+      // The BACKUP_DONE row is written after the snapshot, so the backup cannot contain it; the restore adds RECOVERY_STARTED.
+      const count = async (p: pg.Pool, t: string) =>
+        (await p.query(`SELECT count(*)::int AS n FROM ${t}${t === 'audit_log' ? " WHERE action NOT IN ('BACKUP_DONE', 'RECOVERY_STARTED')" : ''}`)).rows[0].n;
       for (const t of ['staff', 'devices', 'events', 'audit_log', 'exports']) expect(await count(target.pool, t)).toBe(await count(pool(), t));
       expect(await count(target.pool, 'sessions')).toBe(0); // everyone signs in again after a restore
       // New audit rows continue after the restored ones instead of colliding.
@@ -60,6 +64,23 @@ describe('backup and restore', () => {
       // The restored device keeps its key, so it can keep pushing.
       const { rows } = await target.pool.query('SELECT last_device_seq FROM devices');
       expect(rows[0].last_device_seq).toBe(2);
+
+      // §11.4: the restored server holds pushes until an admin ends recovery, so the replay keeps its serverSeqs.
+      const restored = buildApp(target.db, { origin: ORIGIN });
+      try {
+        const cookie = await sessionCookie(target.pool, 'S-0004', d.deviceId);
+        const push = () => restored.inject({ method: 'POST', url: '/api/v1/events', headers: { ...CSRF, cookie }, payload: { deviceId: d.deviceId, events: [admitOn(d, 2, { staffId: 'S-0004' })] } });
+        const held = await push();
+        expect(held.statusCode).toBe(503);
+        expect(held.json().error.code).toBe('RECOVERING');
+        const importing = await restored.inject({ method: 'POST', url: '/api/v1/recovery/queue-import', headers: { ...CSRF, cookie }, payload: { deviceId: d.deviceId, events: [admitOn(d, 9, { staffId: 'S-0004' })] } });
+        expect(importing.json().error.code).toBe('RECOVERING'); // a saved file must not take the replay's serverSeqs either
+        expect((await restored.inject({ method: 'GET', url: '/api/v1/alerts', headers: { cookie } })).json().alerts[0]).toMatchObject({ code: 'RECOVERING' });
+        expect((await restored.inject({ method: 'POST', url: '/api/v1/recovery/end', headers: { ...CSRF, cookie } })).statusCode).toBe(200);
+        expect((await push()).json().results[0]).toMatchObject({ status: 'appended', serverSeq: 3 });
+      } finally {
+        await restored.close();
+      }
     } finally {
       await target.pool.end();
     }
@@ -86,10 +107,20 @@ describe('backup and restore', () => {
     }
   });
 
-  it('records each backup in the audit log, without patient data', async () => {
-    await takeBackup(pool(), key);
+  it('records each backup in the audit log once the file is written, without patient data', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wdb-backup-'));
+    await backupOnce(pool(), key, dir);
+    expect(readdirSync(dir)).toEqual([expect.stringMatching(/^wdb-\d{8}T\d{6}Z-2\.backup$/)]);
     const { rows } = await owner.query("SELECT code FROM audit_log WHERE action = 'BACKUP_DONE'");
     expect(rows).toEqual([{ code: '2' }]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('a backup that cannot be written is not recorded as done, so BACKUP_STALE can fire', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wdb-backup-'));
+    chmodSync(dir, 0o500); // for example a host folder the backup user cannot write
+    await expect(backupOnce(pool(), key, dir)).rejects.toThrow();
+    const { rows } = await owner.query("SELECT code FROM audit_log WHERE action = 'BACKUP_DONE'");
+    expect(rows).toEqual([]);
   });
 });
 

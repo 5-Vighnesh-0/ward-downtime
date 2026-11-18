@@ -174,7 +174,9 @@ function Ready({ engine }: { engine: SyncEngine }) {
     );
 
   const staleMin = Math.floor((Date.now() - s.lastPushAt) / 60_000);
-  const stale = s.unsynced > 0 && Date.now() - s.lastPushAt > STALE_PUSH_MS;
+  // Refused changes never send, so they must not keep the stale-push warning up or block an update (§6.4).
+  const sending = s.outbox.some((i) => i.state === 'queued' || i.state === 'sending');
+  const stale = sending && Date.now() - s.lastPushAt > STALE_PUSH_MS;
   const canResolve = session.role === 'charge' || session.role === 'admin';
   const openConflicts = Object.values(s.view.conflicts).filter((c) => c.status === 'open').length;
   const tabs: [Tab, string][] = [
@@ -240,7 +242,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
         {update && (
           <Banner>
             {copy.updateReady}
-            <Button variant="primary" disabled={s.unsynced > 0} onClick={update}>
+            <Button variant="primary" disabled={sending} onClick={update}>
               Install update
             </Button>
           </Banner>
@@ -255,8 +257,8 @@ function Ready({ engine }: { engine: SyncEngine }) {
       {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
       {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
       {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
-      {tab === 'changes' && <MyChangesScreen engine={engine} />}
-      {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} />}
+      {tab === 'changes' && <MyChangesScreen engine={engine} isAdmin={session.role === 'admin'} />}
+      {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} recovering={alerts.some((a) => a.code === 'RECOVERING')} />}
       {tab === 'audit' && <AuditScreen net={net} />}
       {tab === 'admin' && <AdminScreen engine={engine} net={net} />}
       <LiveRegion message={announce} />

@@ -58,7 +58,6 @@ export async function takeBackup(pool: pg.Pool, key: Buffer): Promise<{ bytes: B
     const iv = randomBytes(12);
     const c = createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
     const ct = Buffer.concat([c.update(gzipSync(lines.join('\n'))), c.final()]);
-    await pool.query("INSERT INTO audit_log (action, outcome, code, request_id) VALUES ('BACKUP_DONE', 'ok', $1, 'backup')", [String(header.headSeq)]);
     return { bytes: Buffer.concat([MAGIC, iv, ct, c.getAuthTag()]), headSeq: header.headSeq };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -106,6 +105,8 @@ export async function restoreDatabase(pool: pg.Pool, db: Db, data: BackupData): 
     }
     await client.query('UPDATE log_head SET last_seq = $1, last_hash = $2 WHERE id = 1', [data.header.headSeq, Buffer.from(data.header.headHash, 'hex')]);
     await client.query("SELECT setval('audit_log_audit_id_seq', GREATEST((SELECT max(audit_id) FROM audit_log), 1))");
+    // The server holds pushes until an admin replays the entries this backup lacks and ends recovery (§11.4).
+    await client.query("INSERT INTO audit_log (action, outcome, code, request_id) VALUES ('RECOVERY_STARTED', 'ok', $1, 'restore')", [String(data.header.headSeq)]);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -142,11 +143,13 @@ export function keep(files: readonly string[], nowMs: number): string[] {
   return files.filter((f) => !NAME.test(f) || kept.has(f));
 }
 
-async function backupOnce(pool: pg.Pool, key: Buffer, dir: string): Promise<void> {
+export async function backupOnce(pool: pg.Pool, key: Buffer, dir: string): Promise<void> {
   const { bytes, headSeq } = await takeBackup(pool, key);
   const name = backupFileName(new Date(), headSeq);
   writeFileSync(join(dir, `${name}.part`), bytes, { flag: 'wx', mode: 0o600 });
   renameSync(join(dir, `${name}.part`), join(dir, name)); // a crash never leaves a half file under a real name
+  // Only now is the backup real: BACKUP_STALE (SEC-20) watches this row, so a failed write must not add it.
+  await pool.query("INSERT INTO audit_log (action, outcome, code, request_id) VALUES ('BACKUP_DONE', 'ok', $1, 'backup')", [String(headSeq)]);
   const all = readdirSync(dir);
   const kept = new Set(keep(all, Date.now()));
   for (const f of all) if (!kept.has(f)) rmSync(join(dir, f));

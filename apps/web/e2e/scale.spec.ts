@@ -28,6 +28,8 @@ async function seedLog(): Promise<void> {
     Buffer.alloc(32),
     Buffer.alloc(16),
   ]);
+  // The server only takes changes from staff who have signed in on the tablet (SEC-6).
+  await owner.pool.query(`INSERT INTO audit_log (staff_id, device_id, action, outcome, request_id) VALUES ('S-9999', $1, 'SIGNIN_OK', 'ok', 'scale-seed')`, [deviceId]);
   let seq = 0;
   const make = (type: AnyEvent['type'], payload: object): AnyEvent => {
     seq += 1;

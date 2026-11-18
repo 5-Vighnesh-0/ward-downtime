@@ -41,14 +41,14 @@ afterEach(async () => {
 /** Enrolment is limited to 10 per hour per address, so tablets past the tenth enrol through a second server on the same database. */
 async function tablets(roles: Role[]): Promise<Tablet[]> {
   const out: Tablet[] = [];
-  let extra: Ward | undefined;
+  let extra: (Pick<Ward, 'baseUrl' | 'owner'> & { close: () => Promise<void> }) | undefined;
   for (const [i, role] of roles.entries()) {
     if (i === 10) {
       const db = createDb(APP_URL);
       const owner = createDb(OWNER_URL);
       const app = buildApp(db.db, { origin: 'https://wdb.test' });
       await app.listen({ host: '127.0.0.1', port: 0 });
-      extra = { app, owner, baseUrl: `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`, close: async () => (await app.close(), await db.pool.end(), await owner.pool.end()) };
+      extra = { owner, baseUrl: `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`, close: async () => (await app.close(), await db.pool.end(), await owner.pool.end()) };
     }
     const t = await tablet(extra ?? ward, role);
     t.net.baseUrl = ward.baseUrl; // the session lives in the database, so it works on the ward server too

@@ -19,6 +19,8 @@ export interface Ward {
   baseUrl: string;
   owner: ReturnType<typeof createDb>;
   close: () => Promise<void>;
+  /** Stops the server and starts a new one on the same database (tablets must take the new `baseUrl`). */
+  restart: () => Promise<void>;
 }
 
 export async function startWard(opts: { streamBacklog?: number } = {}): Promise<Ward> {
@@ -26,19 +28,25 @@ export async function startWard(opts: { streamBacklog?: number } = {}): Promise<
   await owner.pool.query(`TRUNCATE events, audit_log, sessions, devices, staff RESTART IDENTITY CASCADE`);
   await owner.pool.query(`UPDATE log_head SET last_seq = 0, last_hash = decode(repeat('00', 32), 'hex')`);
   const appDb = createDb(APP_URL);
-  const app = buildApp(appDb.db, { origin: 'https://wdb.test', streamPingMs: 1000, ...opts });
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const baseUrl = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  return {
-    app,
-    baseUrl,
+  const listen = async () => {
+    const app = buildApp(appDb.db, { origin: 'https://wdb.test', streamPingMs: 1000, ...opts });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    return { app, baseUrl: `http://127.0.0.1:${(app.server.address() as AddressInfo).port}` };
+  };
+  const ward: Ward = {
+    ...(await listen()),
     owner,
     close: async () => {
-      await app.close();
+      await ward.app.close();
       await appDb.pool.end();
       await owner.pool.end();
     },
+    restart: async () => {
+      await ward.app.close();
+      Object.assign(ward, await listen());
+    },
   };
+  return ward;
 }
 
 /** A tablet's network: keeps its own session cookie (as a browser would), and can be cut off. */
@@ -84,7 +92,7 @@ let tablets = 0;
 let staffSeq = 0;
 
 /** Enroll → admin approves → staff signs in → engine opened (design.md §9.2, §9.4.1). */
-export async function tablet(ward: Ward, role: Role = 'nurse'): Promise<Tablet> {
+export async function tablet(ward: Pick<Ward, 'baseUrl' | 'owner'>, role: Role = 'nurse'): Promise<Tablet> {
   const db = openDb(`wdb-test-${++tablets}`);
   const net = testNet(ward.baseUrl);
   await enroll(db, net, `Tablet ${tablets}`);

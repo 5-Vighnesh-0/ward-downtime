@@ -76,6 +76,31 @@ describe('POST /api/v1/sessions', () => {
     expect((await signIn('S-0001', PIN)).statusCode).toBe(201);
   });
 
+  it('parallel sign-ins cannot get past the lockout: at most 5 PINs are checked, and the right PIN in the burst is refused', async () => {
+    const other = await addDevice(pool); // a second tablet, so per-tablet ordering alone is not enough
+    const burst = Array.from({ length: 30 }, (_, i) => signIn('S-0001', i === 20 ? PIN : '000000', i % 2 ? other : d));
+    const replies = await Promise.all(burst);
+    expect(replies[20]?.statusCode).not.toBe(201);
+    const checked = await owner.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'SIGNIN_FAIL' AND code = 'SIGNIN_FAILED'");
+    expect(checked.rows[0].n).toBeLessThanOrEqual(5);
+    expect(code(await signIn('S-0001', PIN))).toEqual([401, 'ACCOUNT_LOCKED']);
+  });
+
+  it('pauses sign-in on a device after 20 failures in 15 minutes, also when they arrive at once', async () => {
+    await Promise.all(Array.from({ length: 25 }, (_, i) => signIn(`S-${String(200 + i).padStart(4, '0')}`, '000000')));
+    const checked = await owner.query("SELECT count(*)::int AS n FROM audit_log WHERE action = 'SIGNIN_FAIL' AND code = 'SIGNIN_FAILED'");
+    expect(checked.rows[0].n).toBe(20);
+    expect(code(await signIn('S-0001', PIN))).toEqual([429, 'SIGNIN_PAUSED']);
+  });
+
+  it('an attempt cut off after its claim still leaves an expiring lock, never a silent permanent one', async () => {
+    await owner.query("UPDATE staff SET failed_attempts = 4 WHERE staff_id = 'S-0001'");
+    await owner.query("UPDATE staff SET failed_attempts = failed_attempts + 1, locked_until = CASE WHEN failed_attempts + 1 >= 5 THEN now() + interval '15 minutes' END WHERE staff_id = 'S-0001'"); // the claim, then the crash
+    expect(code(await signIn('S-0001', PIN))).toEqual([401, 'ACCOUNT_LOCKED']);
+    await owner.query("UPDATE staff SET locked_until = now() - interval '1 second' WHERE staff_id = 'S-0001'");
+    expect((await signIn('S-0001', PIN)).statusCode).toBe(201);
+  });
+
   it('pauses sign-in on a device after 20 failures in 15 minutes', async () => {
     for (let i = 0; i < 20; i++) await signIn(`S-${String(100 + i).padStart(4, '0')}`, '000000');
     expect(code(await signIn('S-0001', PIN))).toEqual([429, 'SIGNIN_PAUSED']);

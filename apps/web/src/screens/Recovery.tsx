@@ -126,29 +126,47 @@ function ImportForm({ net }: { net: Net }) {
   );
 }
 
-/** §11.4: the server was restored from an old backup; this tablet sends back the entries it lost. */
-function ReplayPanel({ engine }: { engine: SyncEngine }) {
+/** §11.4: the server was restored from an old backup; this tablet sends back the entries it lost, then ends recovery. */
+function ReplayPanel({ engine, behind, recovering }: { engine: SyncEngine; behind: boolean; recovering: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'info' | 'error'; text: string }>();
   return (
     <section className="flex flex-col gap-3 rounded-lg border-2 border-status-pending p-4">
-      <h2 className="text-xl font-semibold">Replay the log from this tablet</h2>
+      <h2 className="text-xl font-semibold">Recovery after a restore</h2>
       <p>
-        The ward server has fewer changes than this tablet. Use the tablet that has been in contact most recently. The server checks
-        every entry against its hash chain and each tablet's signature before taking it back.
+        The ward server was restored from a backup and holds every tablet's new changes until you finish. First replay the log from
+        the tablet that was in contact most recently. The server checks every entry against its hash chain and each tablet's
+        signature before taking it back. Then finish recovery.
       </p>
-      <Button
-        variant="primary"
-        wide
-        onClick={async () => {
-          try {
-            setMsg({ tone: 'info', text: `Replayed ${await engine.replayToServer()} log entries. Tablets now send their saved changes.` });
-          } catch (e) {
-            setMsg({ tone: 'error', text: e instanceof ApiError ? `The ward server refused the replay (${e.code}). Tell IT; do not try another tablet yet.` : copy.needsServer });
-          }
-        }}
-      >
-        Replay log to the ward server
-      </Button>
+      {behind && (
+        <Button
+          variant="primary"
+          wide
+          onClick={async () => {
+            try {
+              setMsg({ tone: 'info', text: `Replayed ${await engine.replayToServer()} log entries. Check any other tablet that was ahead, then finish recovery.` });
+            } catch (e) {
+              setMsg({ tone: 'error', text: e instanceof ApiError ? `The ward server refused the replay (${e.code}). Tell IT; do not try another tablet yet.` : copy.needsServer });
+            }
+          }}
+        >
+          Replay log to the ward server
+        </Button>
+      )}
+      {recovering && !behind && (
+        <Button
+          wide
+          onClick={async () => {
+            try {
+              await engine.finishRecovery();
+              setMsg({ tone: 'info', text: 'Recovery finished. Tablets now send their saved changes.' });
+            } catch (e) {
+              setMsg({ tone: 'error', text: e instanceof ApiError ? `The ward server refused (${e.code}).` : copy.needsServer });
+            }
+          }}
+        >
+          Finish recovery
+        </Button>
+      )}
       {msg && (
         <Banner tone={msg.tone}>
           <span role="status">{msg.text}</span>
@@ -158,12 +176,12 @@ function ReplayPanel({ engine }: { engine: SyncEngine }) {
   );
 }
 
-export function RecoveryScreen({ engine, net, isAdmin }: { engine: SyncEngine; net: Net; isAdmin: boolean }) {
+export function RecoveryScreen({ engine, net, isAdmin, recovering }: { engine: SyncEngine; net: Net; isAdmin: boolean; recovering: boolean }) {
   const s = useEngine(engine);
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-2xl font-semibold">Recovery</h1>
-      {isAdmin && s.alert === 'SERVER_BEHIND' && <ReplayPanel engine={engine} />}
+      {isAdmin && (s.alert === 'SERVER_BEHIND' || recovering) && <ReplayPanel engine={engine} behind={s.alert === 'SERVER_BEHIND'} recovering={recovering} />}
       <section className="flex flex-col gap-3 rounded-lg border-2 border-border p-4">
         <h2 className="text-xl font-semibold">Recovery export</h2>
         <ExportForm engine={engine} net={net} isAdmin={isAdmin} />

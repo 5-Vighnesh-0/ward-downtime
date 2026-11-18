@@ -113,6 +113,23 @@ describe('POST /api/v1/recovery/queue-import (§8.4)', () => {
     expect(code(await app.inject({ method: 'POST', url: '/api/v1/events', headers: { ...CSRF, cookie: lostCookie }, payload: { deviceId: lost.deviceId, events: [unsent] } }))).toEqual([403, 'DEVICE_REVOKED']);
   });
 
+  it('takes a change the server refused earlier once its cause is fixed, though the tablet has pushed newer ones since', async () => {
+    await push([signed(d, 'WARD_CONFIGURED', { beds: [{ bedId: 'B01', label: 'Bed 1' }] }, { staffId: 'S-0004' })]);
+    const note = signed(d, 'HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Settled overnight' }, { staffId: 'S-0001' }); // a clerk may not
+    const later = admitOn(d, 3, { staffId: 'S-0001' });
+    expect((await push([note, later])).json().results.map((x: { status: string; code?: string }) => x.code ?? x.status)).toEqual(['ROLE_FORBIDDEN', 'appended']);
+    await owner.query("UPDATE staff SET role = 'nurse' WHERE staff_id = 'S-0001'"); // the cause is fixed
+
+    const r = await as('admin', 'POST', '/api/v1/recovery/queue-import', { deviceId: d.deviceId, events: [note] });
+    expect(r.json().results).toEqual([expect.objectContaining({ eventId: note.eventId, status: 'appended' })]);
+    // A deviceSeq the log already holds is still refused, never a second event under it.
+    const reuse = signed(d, 'RENAME', { patientId: 'T-TST-0003', label: 'Patient 3' }, { staffId: 'S-0001', deviceSeq: later.deviceSeq });
+    const again = await as('admin', 'POST', '/api/v1/recovery/queue-import', { deviceId: d.deviceId, events: [reuse] });
+    expect(again.json().results).toEqual([expect.objectContaining({ status: 'refused', code: 'DEVICE_SEQ_REGRESSION' })]);
+    // The tablet's own pushes go on from its newest deviceSeq.
+    expect((await push([admitOn(d, 4, { staffId: 'S-0001', deviceSeq: later.deviceSeq + 1 })])).json().results[0]).toMatchObject({ status: 'appended' });
+  });
+
   it('is admin only and refuses unknown or pending devices', async () => {
     expect(code(await as('charge', 'POST', '/api/v1/recovery/queue-import', { deviceId: d.deviceId, events: [admitOn(d, 1)] }))).toEqual([403, 'ROLE_FORBIDDEN']);
     const pending = await addDevice(pool, 'pending');

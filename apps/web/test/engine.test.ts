@@ -2,9 +2,10 @@
 // Also SEC-T-WIPE and SEC-T-REVOKE (client wipe), SEC-T-TAMPER (CHAIN_FORK on the device), SIM-04 (replay after restore).
 import { afterEach, describe, expect, it } from 'vitest';
 import { Dexie } from 'dexie';
-import { revokeDevice } from '@wdb/server/src/admin.ts';
+import { addStaffMember, revokeDevice } from '@wdb/server/src/admin.ts';
+import { signIn } from '../src/sync/device.ts';
 import { SyncEngine } from '../src/sync/engine.ts';
-import { BEDS, eventually, serverLog, startWard, tablet, type Tablet, type Ward } from './support.ts';
+import { BEDS, eventually, PIN, serverLog, startWard, tablet, type Tablet, type Ward } from './support.ts';
 
 let ward: Ward;
 const open: Tablet[] = [];
@@ -257,7 +258,50 @@ describe('pull, chain check and live stream (§5.6, §9.6)', () => {
   }, 30_000);
 });
 
+/** The server loses everything after the ward setup (entry 1), as a restore from an old backup would. */
+async function loseAllButEntry1() {
+  await ward.owner.pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only');
+  await ward.owner.pool.query('DELETE FROM events WHERE server_seq > 1');
+  await ward.owner.pool.query('ALTER TABLE events ENABLE TRIGGER events_append_only');
+  await ward.owner.pool.query('UPDATE log_head SET last_seq = 1, last_hash = (SELECT hash FROM events WHERE server_seq = 1)');
+}
+
 describe('server restored from an old backup (design.md §11.4)', () => {
+  it('holds every push after a restore until an admin has replayed and finished recovery, so a tablet that was behind cannot fork the log', async () => {
+    const admin = await setup();
+    const behind = await another(); // has entry 1 only, and is off the network meanwhile
+    behind.net.offline = true;
+    const t = await another();
+    await t.engine.admit({ label: 'Rowan Ashby', bedId: 'B01' });
+    await t.engine.admit({ label: 'Mira Holt', bedId: 'B02' });
+    await t.engine.push();
+    await admin.engine.pull();
+    await loseAllButEntry1();
+    await ward.owner.pool.query("INSERT INTO audit_log (action, outcome, code, request_id) VALUES ('RECOVERY_STARTED', 'ok', '1', 'restore')"); // as restoreDatabase does
+    await ward.restart(); // the server is started again after the restore
+    for (const x of [admin, behind, t]) x.net.baseUrl = ward.baseUrl;
+
+    behind.net.offline = false;
+    await behind.engine.admit({ label: 'Ola Brandt', bedId: 'B03' });
+    await behind.engine.push();
+    expect(behind.engine.state.unsynced).toBe(1); // held, not appended at entry 2
+    expect((await serverLog(ward)).length).toBe(1);
+
+    await t.engine.pull(); // t holds entries 2 and 3, and shows it
+    await expect(admin.engine.finishRecovery()).rejects.toThrow(/REPLAY_FIRST/); // not before the replay
+    expect(await admin.engine.replayToServer()).toBe(2); // the replay still fits the chain
+    await behind.engine.push();
+    expect((await serverLog(ward)).length).toBe(3); // still held until the admin says the replay is complete
+    await admin.engine.finishRecovery();
+    await behind.engine.push();
+    expect(behind.engine.state.unsynced).toBe(0);
+    for (const x of [admin, behind, t]) await x.engine.pull();
+    expect((await serverLog(ward)).length).toBe(4);
+    expect(t.engine.state.alert).toBe(null);
+    expect(behind.engine.state.confirmed).toEqual(admin.engine.state.confirmed);
+    expect(t.engine.state.confirmed).toEqual(admin.engine.state.confirmed);
+  });
+
   it('tablets stop pushing, an admin tablet replays the lost entries, then everything converges', async () => {
     const admin = await setup();
     const t = await another();
@@ -266,11 +310,7 @@ describe('server restored from an old backup (design.md §11.4)', () => {
     await t.engine.push();
     await admin.engine.pull();
     const head = (await t.db.meta.get('device'))?.headHash;
-    // The server loses everything after the ward setup (entry 1), as a restore from an old backup would.
-    await ward.owner.pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only');
-    await ward.owner.pool.query('DELETE FROM events WHERE server_seq > 1');
-    await ward.owner.pool.query('ALTER TABLE events ENABLE TRIGGER events_append_only');
-    await ward.owner.pool.query('UPDATE log_head SET last_seq = 1, last_hash = (SELECT hash FROM events WHERE server_seq = 1)');
+    await loseAllButEntry1();
 
     await t.engine.pull(); // a plain pull already notices, before anything is pushed
     expect(t.engine.state.alert).toBe('SERVER_BEHIND');
@@ -290,6 +330,28 @@ describe('server restored from an old backup (design.md §11.4)', () => {
     expect(t.engine.state.confirmed.beds.B03).toMatchObject({ status: 'occupied' });
     const [first] = await ward.owner.pool.query('SELECT encode(hash, \'hex\') AS h FROM events WHERE server_seq = 3').then((r) => r.rows);
     expect(first.h).toBe(head); // the replayed entries are the original ones, hashes and all
+  });
+});
+
+describe('refused changes (§6.4)', () => {
+  it('stay on the tablet, saved to file if needed, until an admin signed in on it dismisses them', async () => {
+    await setup();
+    const t = await another('clerk');
+    const note = await t.engine.record('HANDOFF_NOTE_ADDED', { bedId: 'B01', text: 'Settled overnight' }); // clerks may not
+    await t.engine.push();
+    expect(t.engine.state.outbox).toEqual([expect.objectContaining({ eventId: note.eventId, state: 'refused', code: 'ROLE_FORBIDDEN' })]);
+    await expect(t.engine.dismiss(note.eventId)).rejects.toThrow(/admin/);
+
+    await addStaffMember(ward.owner.db, { staffId: 'S-0900', role: 'admin', displayName: 'Test S-0900', pin: PIN });
+    await signIn(t.db, t.net, 'S-0900', PIN);
+    await t.engine.resume();
+    const queued = await t.engine.admit({ label: 'Rowan Ashby', bedId: 'B02' });
+    await expect(t.engine.dismiss(queued.eventId)).rejects.toThrow(/refused/); // only refused changes, never unsent ones
+    await t.engine.dismiss(note.eventId);
+    await t.engine.push();
+    expect(t.engine.state.outbox).toEqual([]);
+    expect(t.engine.state.unsynced).toBe(0);
+    expect(await t.db.outbox.count()).toBe(0); // gone after a reload too
   });
 });
 

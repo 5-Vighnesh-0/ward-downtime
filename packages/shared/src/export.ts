@@ -33,6 +33,7 @@ export const csvRow = (cells: (string | number | null | undefined)[]) => `${cell
 export function buildRecoveryExport(entries: readonly LedgerLike[], o: ExportOptions): { json: string; csv: string; upToSeq: number } {
   const board = replay(entries);
   const labels = new Map<string, string>(); // label at the time of each event
+  const lastBed = new Map<string, string>(); // the last bed the exported rows put each patient in
   const rows = [];
   for (const { serverSeq, serverTime, event: e } of entries) {
     if (e.type === 'WARD_CONFIGURED' || e.type === 'RESOLVE_CONFLICT') continue; // their effect shows in the kept placements
@@ -42,6 +43,8 @@ export function buildRecoveryExport(entries: readonly LedgerLike[], o: ExportOpt
     if (e.type === 'RENAME' && outcome === 'applied') labels.set(e.payload.patientId, e.payload.label);
     if (outcome !== 'applied') continue;
     const p = e.payload;
+    if (e.type === 'ADMIT') lastBed.set(p.patientId, e.payload.bedId);
+    if (e.type === 'TRANSFER') lastBed.set(p.patientId, e.payload.toBedId);
     rows.push({
       serverSeq,
       eventId: e.eventId,
@@ -67,11 +70,23 @@ export function buildRecoveryExport(entries: readonly LedgerLike[], o: ExportOpt
       bedId: c.bedId,
       candidates: c.candidates.map((x) => ({ eventId: x.eventId, patientId: x.patientId, label: board.patients[x.patientId]?.label ?? null })),
     }));
+  // Patients with no bed now. The rows alone would leave one in their last bed: a transfer that lost a conflict has
+  // already emptied it, and a first occupant who lost a conflict has no applied row at all.
+  const unplaced = Object.entries(board.patients)
+    .filter(([, p]) => p.where.kind === 'unplaced')
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([patientId, p]) => ({ patientId, label: p.label, lastBedId: lastBed.get(patientId) ?? null }));
   const json = JSON.stringify(
-    { format: 'wdb-recovery-export/1', classification: CLASSIFICATION, ward: o.ward, source: o.source, generatedAt: o.generatedAt, upToSeq, headHash: last?.hash ?? '0'.repeat(64), events: rows, openConflicts },
+    { format: 'wdb-recovery-export/1', classification: CLASSIFICATION, ward: o.ward, source: o.source, generatedAt: o.generatedAt, upToSeq, headHash: last?.hash ?? '0'.repeat(64), events: rows, openConflicts, unplaced },
     null,
     2,
   );
-  const csv = `# ${CLASSIFICATION} - upToSeq=${upToSeq}\r\n${csvRow([...COLUMNS])}${rows.map((r) => csvRow(COLUMNS.map((c) => r[c]))).join('')}`;
+  // The same two lists close the CSV as comment lines, so a CSV-only reader sees them too.
+  // Through csvRow like the rows: labels are free text, so the same quoting and formula guard apply.
+  const notes = [
+    ...openConflicts.map((c) => csvRow(['# open conflict', c.conflictId, c.bedId, ...c.candidates.flatMap((x) => [x.patientId, x.label])])),
+    ...unplaced.map((u) => csvRow(['# unplaced', u.patientId, u.label, u.lastBedId ? `no longer in ${u.lastBedId}` : 'not kept in any bed'])),
+  ];
+  const csv = `# ${CLASSIFICATION} - upToSeq=${upToSeq}\r\n${csvRow([...COLUMNS])}${rows.map((r) => csvRow(COLUMNS.map((c) => r[c]))).join('')}${notes.join('')}`;
   return { json, csv, upToSeq };
 }

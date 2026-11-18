@@ -1,9 +1,9 @@
 // Push path (design.md §5.3): verify, dedupe, order and chain one device's batch in one transaction.
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { ALLOWED_ROLES, canonicalize, EventSchema, type Role } from '@wdb/shared';
 import { entryHash } from './chain.ts';
-import { auditLog, devices, events, logHead, staff } from './db/schema.ts';
+import { auditLog, devices, events, logHead, sessions, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
 import { publicKeyFromRaw, verifySignature } from './signature.ts';
 
@@ -13,6 +13,7 @@ export type RefusalCode =
   | 'SIGNATURE_INVALID'
   | 'IDEMPOTENCY_MISMATCH'
   | 'ROLE_FORBIDDEN'
+  | 'STAFF_NOT_ON_DEVICE'
   | 'DEVICE_SEQ_REGRESSION';
 
 export type EventResult =
@@ -49,6 +50,7 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx: { req
     let lastDeviceSeq = device.lastDeviceSeq;
     const key = publicKeyFromRaw(device.publicKey);
     const roles = new Map<string, Role | null>();
+    const onDevice = new Map<string, boolean>();
     const results: EventResult[] = [];
     const staffOf: (string | null)[] = []; // per result, for the audit rows (SEC-18)
 
@@ -95,9 +97,26 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx: { req
         refuse('ROLE_FORBIDDEN');
         continue;
       }
-      if (e.deviceSeq <= lastDeviceSeq) {
-        refuse('DEVICE_SEQ_REGRESSION');
+      // SEC-6, SEC-18: the staffId is inside the device-signed body, so a modified client could name anyone. Only staff
+      // who have signed in on this tablet can have made a change on it (offline sign-in needs an earlier online one).
+      if (!onDevice.has(e.staffId)) {
+        const [s] = await tx.select({ x: sessions.staffId }).from(sessions).where(and(eq(sessions.staffId, e.staffId), eq(sessions.deviceId, deviceId))).limit(1);
+        // Sessions are not in backups; after a restore the SIGNIN_OK audit rows (which are) still show who used the tablet.
+        const [a] = s ? [s] : await tx.select({ x: auditLog.staffId }).from(auditLog).where(and(eq(auditLog.staffId, e.staffId), eq(auditLog.deviceId, deviceId), eq(auditLog.action, 'SIGNIN_OK'))).limit(1);
+        onDevice.set(e.staffId, Boolean(a));
+      }
+      if (!onDevice.get(e.staffId)) {
+        refuse('STAFF_NOT_ON_DEVICE');
         continue;
+      }
+      if (e.deviceSeq <= lastDeviceSeq) {
+        // An admin import may bring back an event refused earlier (its cause since fixed) after newer ones from the
+        // same tablet: allowed as long as the log has no event under that deviceSeq (§6.4, §8.4).
+        const [taken] = ctx.importing ? await tx.select({ id: events.eventId }).from(events).where(and(eq(events.deviceId, deviceId), eq(events.deviceSeq, e.deviceSeq))) : [true];
+        if (taken) {
+          refuse('DEVICE_SEQ_REGRESSION');
+          continue;
+        }
       }
 
       const serverSeq = lastSeq + 1;
@@ -121,7 +140,7 @@ export function appendBatch(db: Db, deviceId: string, raw: unknown[], ctx: { req
       staffOf.push(who);
       lastSeq = serverSeq;
       lastHash = hash;
-      lastDeviceSeq = e.deviceSeq;
+      lastDeviceSeq = Math.max(lastDeviceSeq, e.deviceSeq);
     }
 
     await tx.update(logHead).set({ lastSeq, lastHash }).where(eq(logHead.id, 1));

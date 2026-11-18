@@ -80,7 +80,7 @@ export function SaveToFile({ engine }: { engine: SyncEngine }) {
   );
 }
 
-export function MyChangesScreen({ engine }: { engine: SyncEngine }) {
+export function MyChangesScreen({ engine, isAdmin }: { engine: SyncEngine; isAdmin: boolean }) {
   const s = useEngine(engine);
   const me = engine.device.deviceId;
   const blocked = new Set(s.blocked);
@@ -106,6 +106,9 @@ export function MyChangesScreen({ engine }: { engine: SyncEngine }) {
               <li key={i.eventId} className="rounded-lg border-2 border-dashed border-border p-3">
                 <p className="font-semibold">{describe(i.event)}</p>
                 <p className={st.tone}>{st.text}</p>
+                {isAdmin && i.state === 'refused' && (
+                  <Button onClick={() => void engine.dismiss(i.eventId)}>Dismiss (save to file first if it may be needed)</Button>
+                )}
               </li>
             );
           })}

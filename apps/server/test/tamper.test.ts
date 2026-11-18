@@ -4,7 +4,7 @@ import pg from 'pg';
 import { appendBatch } from '../src/append.ts';
 import { createDb } from '../src/db.ts';
 import { verifyChain } from '../src/verify-chain.ts';
-import { addDevice, addStaff, admitOn, APP_URL, OWNER_URL, reset } from './support.ts';
+import { addDevice, addStaff, admitOn, APP_URL, OWNER_URL, reset, sessionCookie } from './support.ts';
 
 const owner = new pg.Pool({ connectionString: OWNER_URL });
 const { db, pool } = createDb(APP_URL);
@@ -18,6 +18,7 @@ beforeEach(async () => {
   await reset(owner);
   await addStaff(pool, 'S-0001', 'clerk');
   const d = await addDevice(pool);
+  await sessionCookie(pool, 'S-0001', d.deviceId);
   await appendBatch(db, d.deviceId, [admitOn(d, 1), admitOn(d, 2), admitOn(d, 3)]);
 });
 

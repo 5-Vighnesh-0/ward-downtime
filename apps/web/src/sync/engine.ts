@@ -155,6 +155,22 @@ export class SyncEngine {
     return sent;
   }
 
+  /** §6.4: an admin signed in on this tablet clears a change the server refused (save it to file first if needed). */
+  async dismiss(eventId: string): Promise<void> {
+    if (this.#session?.role !== 'admin') throw new Error('only an admin can dismiss a refused change');
+    const item = this.#outbox.find((i) => i.eventId === eventId);
+    if (item?.state !== 'refused') throw new Error('only refused changes can be dismissed');
+    await this.#db.outbox.delete(item.deviceSeq);
+    this.#outbox = this.#outbox.filter((i) => i.eventId !== eventId);
+    this.#publish();
+  }
+
+  /** §11.4, admin only: the replay is complete; the server takes tablets' pushes again. */
+  async finishRecovery(): Promise<void> {
+    await request(this.#net, 'POST', '/api/v1/recovery/end');
+    void this.push();
+  }
+
   async localExport(passphrase: string): Promise<{ filename: string; body: string }> {
     const entries = await this.#db.events.orderBy('serverSeq').toArray();
     const { json, csv, upToSeq } = buildRecoveryExport(entries, {

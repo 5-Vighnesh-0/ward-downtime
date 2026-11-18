@@ -21,3 +21,15 @@ Fix the tablet's date and time (MDM: automatic time). The banner on that tablet 
 **DEVICE_LAGGING**: an approved tablet has not contacted the server for over an hour.
 Find the tablet. If it was offline with unsent changes, sync it or use My changes → Save to file.
 If it is lost, revoke it.
+
+**CHAIN_BREAK**: the hourly (and boot) verify-chain found a log entry that does not match its hash.
+Do not restore or edit anything yet. Run `docker compose run --rm --no-deps migrate node src/verify-chain.ts`.
+If it still fails, treat the server as tampered with: follow the ransomware steps (design.md §11.4, RB-BACKUP).
+
+**BACKUP_STALE**: no backup has been written for over an hour (or none since the server started an hour ago).
+Check `docker compose logs backup` for `backup_failed` (disk full, or a backup folder it cannot write).
+Fix it and watch for the next `backup_done`; until then the tablets' copies are the only recent copy.
+
+**RECOVERING**: the server was restored from a backup and holds every tablet's new changes.
+Follow RB-BACKUP, Real restore: replay the log from the most recently synced tablet, then Recovery → Finish recovery.
+Tablets keep their changes meanwhile; nothing is lost while the alert shows.

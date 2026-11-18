@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { and, desc, eq, gt, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Role } from '@wdb/shared';
 import { addStaffMember, AdminError, approveDevice, revokeDevice, updateStaffMember } from './admin.ts';
@@ -104,6 +104,23 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
   const streams = createStreams(db, bus, { backlog: opts.streamBacklog ?? 1000, pingMs: opts.streamPingMs ?? 20_000 });
   const maxInflight = opts.maxInflightPushes ?? 500;
   let inflight = 0;
+  // §11.4: after a restore (which writes RECOVERY_STARTED), pushes wait until an admin has replayed the lost entries
+  // and ends recovery. Otherwise a tablet that was behind could take the serverSeqs the replay needs, and fork the log.
+  // Read once per process: a restore runs with the server stopped.
+  let recovering: Promise<boolean> | null = null;
+  let furthestKnown = 0; // the highest serverSeq any tablet has shown it holds since this process started
+  const isRecovering = () =>
+    (recovering ??= db
+      .select({ action: auditLog.action })
+      .from(auditLog)
+      .where(inArray(auditLog.action, ['RECOVERY_STARTED', 'RECOVERY_ENDED']))
+      .orderBy(desc(auditLog.auditId))
+      .limit(1)
+      .then(([r]) => r?.action === 'RECOVERY_STARTED')
+      .catch((e: unknown) => {
+        recovering = null;
+        throw e;
+      }));
 
   const deny = (reply: FastifyReply, status: number, code: string, message: string) => reply.code(status).send(error(code, message));
   const audit = (req: FastifyRequest, row: Omit<typeof auditLog.$inferInsert, 'requestId'>) =>
@@ -200,6 +217,15 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     });
 
     // --- Staff sessions (SEC-5, SEC-7) ---
+    // A tablet's sign-ins run one at a time, so a burst cannot all pass the failure checks before any is counted.
+    const signinQueue = new Map<string, Promise<unknown>>();
+    const oneAtATime = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+      const run = (signinQueue.get(key) ?? Promise.resolve()).then(fn, fn);
+      const tail = run.catch(() => undefined);
+      signinQueue.set(key, tail);
+      void tail.then(() => signinQueue.get(key) === tail && signinQueue.delete(key));
+      return run;
+    };
     api.post('/api/v1/sessions', async (req, reply) => {
       const b = SignIn.safeParse(req.body);
       if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid sign-in', z.flattenError(b.error)));
@@ -207,47 +233,50 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       if (!dev) return deny(reply, 401, 'DEVICE_SIG_INVALID', 'Bad device signature');
       if (dev.status === 'revoked') return deny(reply, 403, 'DEVICE_REVOKED', 'Device revoked');
       if (dev.status !== 'active') return deny(reply, 403, 'DEVICE_NOT_ACTIVE', 'Device not active');
+      return oneAtATime(dev.deviceId, () => signInOn(req, reply, dev.deviceId, b.data.staffId, b.data.pin));
+    });
 
+    async function signInOn(req: FastifyRequest, reply: FastifyReply, deviceId: string, staffId: string, pin: string) {
       const [{ n } = { n: 0 }] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(auditLog)
-        .where(and(eq(auditLog.deviceId, dev.deviceId), eq(auditLog.action, 'SIGNIN_FAIL'), gt(auditLog.serverTime, new Date(Date.now() - LOCK_MS))));
+        .where(and(eq(auditLog.deviceId, deviceId), eq(auditLog.action, 'SIGNIN_FAIL'), gt(auditLog.serverTime, new Date(Date.now() - LOCK_MS))));
       if (n >= MAX_DEVICE_FAILURES) return deny(reply, 429, 'SIGNIN_PAUSED', 'Too many failed sign-ins on this device');
 
-      const { staffId, pin } = b.data;
       const fail = async (code: string, status = 401) => {
-        req.log.warn({ event: 'signin_fail', staffId, deviceId: dev.deviceId, code });
-        await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_FAIL', outcome: 'denied', code });
+        req.log.warn({ event: 'signin_fail', staffId, deviceId, code });
+        await audit(req, { staffId, deviceId, action: 'SIGNIN_FAIL', outcome: 'denied', code });
         return deny(reply, status, code, code === 'ACCOUNT_LOCKED' ? 'Account locked for 15 minutes' : 'Staff ID or PIN not recognised');
       };
       const [s] = await db.select().from(staff).where(eq(staff.staffId, staffId));
-      if (s?.lockedUntil && s.lockedUntil.getTime() > Date.now()) return fail('ACCOUNT_LOCKED');
+      // Claim this attempt before checking the PIN, in one statement: attempts from several tablets at once each get
+      // their own count, and the attempt that reaches the limit sets the lock itself (success clears it), so neither a
+      // burst nor a crash mid-attempt gets past it. An expired lock starts the count again.
+      const count = sql`CASE WHEN ${staff.lockedUntil} IS NULL THEN ${staff.failedAttempts} + 1 ELSE 1 END`;
+      const [claim] = s
+        ? await db
+            .update(staff)
+            .set({ failedAttempts: count, lockedUntil: sql`CASE WHEN ${count} >= ${MAX_PIN_FAILURES} THEN now() + ${`${LOCK_MS} milliseconds`}::interval END` })
+            .where(and(eq(staff.staffId, staffId), or(isNull(staff.lockedUntil), lte(staff.lockedUntil, new Date()))))
+            .returning({ failedAttempts: staff.failedAttempts })
+        : [];
+      if (s && !claim) return fail('ACCOUNT_LOCKED');
       // Hash even for unknown staff, so timing does not reveal which IDs exist.
       const ok = await checkPin(pin, s?.pinHash ?? Buffer.alloc(32), s?.pinSalt ?? Buffer.alloc(16));
       if (!s || s.status !== 'active' || !ok) {
-        if (s) {
-          const [u] = await db
-            .update(staff)
-            .set({ failedAttempts: sql`${staff.failedAttempts} + 1` })
-            .where(eq(staff.staffId, staffId))
-            .returning({ failedAttempts: staff.failedAttempts });
-          if ((u?.failedAttempts ?? 0) >= MAX_PIN_FAILURES) {
-            await db.update(staff).set({ failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) }).where(eq(staff.staffId, staffId));
-            await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_LOCKED', outcome: 'denied' });
-          }
-        }
+        if (claim && claim.failedAttempts >= MAX_PIN_FAILURES) await audit(req, { staffId, deviceId, action: 'SIGNIN_LOCKED', outcome: 'denied' });
         return fail('SIGNIN_FAILED');
       }
 
       await db.update(staff).set({ failedAttempts: 0, lockedUntil: null }).where(eq(staff.staffId, staffId));
       const token = newToken();
       const expiresAt = new Date(Date.now() + SESSION_MS);
-      await db.insert(sessions).values({ tokenHash: tokenHash(token), staffId, deviceId: dev.deviceId, expiresAt });
-      await audit(req, { staffId, deviceId: dev.deviceId, action: 'SIGNIN_OK', outcome: 'ok' });
+      await db.insert(sessions).values({ tokenHash: tokenHash(token), staffId, deviceId, expiresAt });
+      await audit(req, { staffId, deviceId, action: 'SIGNIN_OK', outcome: 'ok' });
       reply.setCookie('wdb_sid', token, { httpOnly: true, secure: true, sameSite: 'strict', path: '/api', maxAge: SESSION_MS / 1000 });
       // offlineUntil: how long the device may accept this staff member's PIN offline (SEC-7).
       return reply.code(201).send({ staffId, role: s.role, expiresAt: expiresAt.toISOString(), offlineUntil: expiresAt.toISOString() });
-    });
+    }
 
     api.delete('/api/v1/sessions/current', { onRequest: requireSession() }, async (req, reply) => {
       const a = req.auth as Auth;
@@ -269,7 +298,11 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         // new events would take serverSeqs the tablet already knows. It waits for the admin to replay the log.
         const known = Number(req.headers['x-wdb-known-seq'] ?? 0);
         const [h] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
-        if (Number.isInteger(known) && known > (h?.lastSeq ?? 0)) return deny(reply, 409, 'SERVER_BEHIND', 'This server has fewer log entries than the tablet');
+        if (Number.isInteger(known) && known > (h?.lastSeq ?? 0)) {
+          furthestKnown = Math.max(furthestKnown, known);
+          return deny(reply, 409, 'SERVER_BEHIND', 'This server has fewer log entries than the tablet');
+        }
+        if (await isRecovering()) return reply.header('retry-after', '15').code(503).send(error('RECOVERING', 'Restored from a backup: changes wait until an admin finishes recovery'));
         inflight++;
         const t0 = performance.now();
         try {
@@ -294,6 +327,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         const q = PullQuery.safeParse(req.query);
         if (!q.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid query', z.flattenError(q.error)));
         const [head] = await db.select({ lastSeq: logHead.lastSeq, lastHash: logHead.lastHash }).from(logHead).where(eq(logHead.id, 1));
+        furthestKnown = Math.max(furthestKnown, q.data.after);
         // disabledStaff: devices drop these staff members' offline sign-in (design.md §9.2.3).
         const disabled = await db.select({ id: staff.staffId }).from(staff).where(eq(staff.status, 'disabled')).orderBy(staff.staffId);
         return {
@@ -419,6 +453,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       const b = Import.safeParse(req.body);
       if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid import', z.flattenError(b.error)));
       const auth = req.auth as Auth;
+      if (await isRecovering()) return reply.header('retry-after', '15').code(503).send(error('RECOVERING', 'Restored from a backup: replay the log and finish recovery first'));
       const out = await appendBatch(db, b.data.deviceId, b.data.events, { requestId: req.id, importing: true });
       await audit(req, { staffId: auth.staffId, deviceId: b.data.deviceId, action: 'QUEUE_IMPORT', outcome: out.ok ? 'ok' : 'denied', code: out.ok ? null : out.code });
       if (!out.ok) return deny(reply, out.status, out.code, 'Device not found or not yet approved');
@@ -441,8 +476,21 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       return { headSeq: out.headSeq, headHash: out.headHash, replayed: out.replayed };
     });
 
+    // §11.4: the admin has replayed from the most complete tablet; tablets may push again.
+    api.post('/api/v1/recovery/end', { onRequest: admin }, async (req, reply) => {
+      const auth = req.auth as Auth;
+      // A tablet has shown it holds entries this server lacks: ending now would let others take those serverSeqs.
+      const [h] = await db.select({ lastSeq: logHead.lastSeq }).from(logHead).where(eq(logHead.id, 1));
+      if (furthestKnown > (h?.lastSeq ?? 0)) return deny(reply, 409, 'REPLAY_FIRST', `A tablet holds log entries up to ${furthestKnown}; replay from it first`);
+      await audit(req, { staffId: auth.staffId, deviceId: auth.deviceId, action: 'RECOVERY_ENDED', outcome: 'ok' });
+      recovering = Promise.resolve(false);
+      return { recovering: false };
+    });
+
     // --- Health and alerts (SEC-20): alerts for charge and admin tablets, the full panel for admins ---
-    api.get('/api/v1/alerts', { onRequest: requireSession(['charge', 'admin']) }, async () => ({ alerts: await monitor.alerts() }));
+    api.get('/api/v1/alerts', { onRequest: requireSession(['charge', 'admin']) }, async () => ({
+      alerts: [...((await isRecovering()) ? [{ code: 'RECOVERING', detail: 'changes are held until an admin replays the log and finishes recovery' }] : []), ...(await monitor.alerts())],
+    }));
     api.get('/api/v1/admin/health', { onRequest: admin }, async () => ({ ...(await monitor.health()), sseClients: streams.count() }));
 
     // --- Audit view (FR-14, SEC-18): newest first, paged with `before` ---
