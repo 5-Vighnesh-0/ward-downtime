@@ -6,9 +6,10 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { and, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import type { Role } from '@wdb/shared';
+import { BrandingUpdate, type Role } from '@wdb/shared';
 import { addStaffMember, AdminError, approveDevice, revokeDevice, updateStaffMember } from './admin.ts';
 import { appendBatch } from './append.ts';
+import { inspectImage, logoProblem, MAX_LOGO_BYTES, readBranding, saveBranding } from './branding.ts';
 import { checkPin, fingerprint, newToken, parseDeviceSig, tokenHash, verifyDeviceSig } from './auth.ts';
 import { auditLog, devices, logHead, sessions, staff } from './db/schema.ts';
 import type { Db } from './db.ts';
@@ -133,6 +134,8 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     app.log.error(err);
     return deny(reply, 500, 'INTERNAL', 'Internal error'); // never leak internals
   });
+  // Logo uploads arrive as raw bytes (SEC-32); everything else stays JSON. Other types keep getting 415.
+  app.addContentTypeParser(['image/png', 'image/jpeg'], { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-request-id', req.id);
     reply.header('cache-control', 'no-store'); // responses can hold patient labels: never cache them (ASVS V14)
@@ -421,6 +424,29 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
         if (e instanceof AdminError) return deny(reply, 404, e.code, e.message);
         throw e;
       }
+    });
+
+    // --- Hospital branding (spec 2026-11-18 §1.4, FR-16). Read without a session: the sign-in screen shows it. ---
+    const ward = opts.ward ?? null;
+    api.get('/api/v1/branding', async () => readBranding(db, ward));
+
+    api.put('/api/v1/admin/branding', { onRequest: admin }, async (req, reply) => {
+      const b = BrandingUpdate.safeParse(req.body);
+      if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid branding', z.flattenError(b.error)));
+      const by = (req.auth as Auth).staffId;
+      await saveBranding(db, by, b.data);
+      await audit(req, { staffId: by, deviceId: req.auth?.deviceId ?? null, action: 'BRANDING_CHANGED', outcome: 'ok', code: 'settings' });
+      return readBranding(db, ward);
+    });
+
+    api.put('/api/v1/admin/branding/logo', { onRequest: admin, bodyLimit: MAX_LOGO_BYTES }, async (req, reply) => {
+      const body = req.body as Buffer;
+      const problem = logoProblem(body);
+      if (problem) return deny(reply, 422, 'LOGO_REFUSED', problem);
+      const by = (req.auth as Auth).staffId;
+      await saveBranding(db, by, { logo: body, logoType: inspectImage(body)?.type ?? null });
+      await audit(req, { staffId: by, deviceId: req.auth?.deviceId ?? null, action: 'BRANDING_CHANGED', outcome: 'ok', code: 'logo' });
+      return readBranding(db, ward);
     });
 
     // --- Recovery export (FR-11, SEC-15) and audit export (FR-14). The passphrase is never stored or logged. ---
