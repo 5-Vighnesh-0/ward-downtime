@@ -291,6 +291,7 @@ function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: N
   const [name, setName] = useState('');
   const [accent, setAccent] = useState('#0e7490');
   const [bays, setBays] = useState<Bays>([]);
+  const [logo, setLogo] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>();
   const fileId = useId();
   useEffect(() => {
@@ -298,13 +299,14 @@ function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: N
     setName(data.hospitalName ?? '');
     setAccent(data.accent ?? '#0e7490');
     setBays(data.bays ?? []);
+    setLogo(data.logo ?? null);
   }, [data]);
   if (error) return <p>{error}</p>;
   const tooLight = contrastOnWhite(accent) < MIN_CONTRAST;
   const beds = Object.entries(s.confirmed.beds).sort(([a], [b]) => a.localeCompare(b));
   const setBay = (i: number, bay: Bays[number]) => setBays(bays.map((b, j) => (j === i ? bay : b)));
   const save = async () => {
-    const kept = bays.filter((b) => b.name.trim() && b.beds.length > 0).map((b) => ({ ...b, name: b.name.trim() }));
+    const kept = bays.map((b) => ({ name: b.name.trim(), beds: b.beds.filter((id) => id in s.confirmed.beds) })).filter((b) => b.name && b.beds.length > 0);
     try {
       const b = (await (await request(net, 'PUT', '/api/v1/admin/branding', { hospitalName: name.trim() || null, accent, bays: kept.length ? kept : null })).json()) as Branding;
       onSaved(b);
@@ -330,16 +332,18 @@ function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: N
             const f = e.target.files?.[0];
             if (!f) return;
             try {
-              onSaved((await (await request(net, 'PUT', '/api/v1/admin/branding/logo', f)).json()) as Branding);
+              const saved = (await (await request(net, 'PUT', '/api/v1/admin/branding/logo', f)).json()) as Branding;
+              onSaved(saved);
+              setLogo(saved.logo);
               const picked = await colourFromFile(f).catch(() => null);
               if (picked) setAccent(darkenToContrast(picked));
-              setMsg('Logo saved. Check the colour below, then save.');
+              setMsg(picked ? 'Logo saved. Check the colour below, then save.' : 'Logo saved. No strong colour found in it; pick the hospital colour below, then save.');
             } catch (err) {
               setMsg(errText(err));
             }
           }}
         />
-        {data?.logo && <img src={data.logo} alt="Current hospital logo" className="h-12 w-auto self-start" />}
+        {logo && <img src={logo} alt="Current hospital logo" className="h-12 w-auto self-start" />}
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-3 font-semibold">

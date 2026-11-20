@@ -168,5 +168,5 @@ test('an admin sets the hospital name and the top bar shows it (FR-16)', async (
   await page.getByLabel('Hospital name').fill('Demo General Hospital');
   await page.getByRole('button', { name: 'Save hospital settings' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
-  await expect(page.getByText('Demo General Hospital').first()).toBeVisible();
+  await expect(page.getByRole('banner').getByText('Demo General Hospital')).toBeVisible();
 });
