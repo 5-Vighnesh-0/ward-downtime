@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
-import { configureBeds, resetDb, setUpTablet, startApi, stopApi, swReady, unlock } from './support.ts';
+import { configureBeds, resetDb, setUpTablet, startApi, staffMenu, stopApi, swReady, unlock } from './support.ts';
 
 test.beforeEach(async () => {
   await stopApi();
@@ -34,7 +34,7 @@ test('A11Y-03: every control is at least 48 × 48 px', async ({ page }) => {
   await page.getByRole('button', { name: 'Bed 1, empty' }).click();
   expect(await smallTargets(page)).toEqual([]); // bed sheet
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Lock' }).click();
+  await staffMenu(page, 'Lock');
   expect(await smallTargets(page)).toEqual([]); // PIN pad
 });
 

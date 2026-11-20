@@ -1,6 +1,6 @@
 // Online-only screens (design.md §10.1): Admin (devices, staff, ward beds) and Audit (FR-14, SEC-6, SEC-18).
 import { useCallback, useEffect, useId, useState } from 'react';
-import type { Role } from '@wdb/shared';
+import type { Branding, Role } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import { ApiError, request, type Net } from '../sync/device.ts';
 import type { SyncEngine } from '../sync/engine.ts';
@@ -283,7 +283,7 @@ function HealthPanel({ net }: { net: Net }) {
   );
 }
 
-export function AdminScreen({ engine, net }: { engine: SyncEngine; net: Net }) {
+export function AdminScreen({ engine, net }: { engine: SyncEngine; net: Net; onBranding: (b: Branding) => void }) {
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-2xl font-semibold">Admin</h1>

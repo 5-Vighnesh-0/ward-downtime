@@ -1,6 +1,6 @@
 // App shell (design.md §10.2): device setup → sign-in → board, with idle lock, banners and update prompt.
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ALLOWED_ROLES } from '@wdb/shared';
+import { ALLOWED_ROLES, type Branding } from '@wdb/shared';
 import { registerSW } from 'virtual:pwa-register';
 import { copy } from './copy.en.ts';
 import { AdminScreen, AuditScreen } from './screens/Admin.tsx';
@@ -12,7 +12,9 @@ import { MyChangesScreen } from './screens/MyChanges.tsx';
 import { openDb } from './sync/db.ts';
 import { browserNet, request } from './sync/device.ts';
 import { SyncEngine } from './sync/engine.ts';
-import { Banner, Button, LiveRegion, useEngine } from './ui/kit.tsx';
+import { applyAccent, loadBranding, NO_BRANDING, refreshBranding } from './ui/branding.ts';
+import { sortNotices, type NoticeKey } from './ui/notices.ts';
+import { Button, LiveRegion, NoticeLine, useEngine } from './ui/kit.tsx';
 
 const db = openDb();
 const net = browserNet();
@@ -76,6 +78,10 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const [update, setUpdate] = useState<(() => Promise<void>) | null>(null);
   const [announce, setAnnounce] = useState('');
   const [alerts, setAlerts] = useState<{ code: string; detail: string }[]>([]);
+  const [branding, setBranding] = useState<Branding>(NO_BRANDING);
+  const [more, setMore] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const showBranding = (b: Branding) => (setBranding(b), applyAccent(b.accent));
   const watchesAlerts = session?.role === 'charge' || session?.role === 'admin';
 
   // SEC-20: charge and admin tablets show server alerts; checked every minute while online.
@@ -90,6 +96,11 @@ function Ready({ engine }: { engine: SyncEngine }) {
     const t = setInterval(check, 60_000);
     return () => clearInterval(t);
   }, [watchesAlerts, s.online, locked]);
+  // FR-16: the stored copy at once, then the ward server's whenever the tablet is online.
+  useEffect(() => void loadBranding(db).then(showBranding), []);
+  useEffect(() => {
+    if (s.online) void refreshBranding(db, net).then(showBranding);
+  }, [s.online]);
   const lastUnsynced = useRef(s.unsynced);
 
   // §8.1: ask the browser not to evict our data; on Safari `false` is normal, so only warn.
@@ -179,90 +190,90 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const stale = sending && Date.now() - s.lastPushAt > STALE_PUSH_MS;
   const canResolve = session.role === 'charge' || session.role === 'admin';
   const openConflicts = Object.values(s.view.conflicts).filter((c) => c.status === 'open').length;
-  const tabs: [Tab, string][] = [
-    ['board', 'Board'],
-    ...(canResolve ? ([['conflicts', `Conflicts (${openConflicts})`]] as [Tab, string][]) : []),
-    ['unplaced', 'Unplaced'],
-    ['changes', 'My changes'],
-    ...(canResolve ? ([['recovery', 'Recovery'], ['audit', 'Audit']] as [Tab, string][]) : []),
-    ...(session.role === 'admin' ? ([['admin', 'Admin']] as [Tab, string][]) : []),
+  type Item = [Tab, string, string]; // id, label, icon (decorative)
+  const main: Item[] = [
+    ['board', 'Board', '▦'],
+    ['unplaced', 'Unplaced', '⇄'],
+    ['changes', 'My changes', '↻'],
+    ...(canResolve ? ([['conflicts', `Conflicts (${openConflicts})`, '⚠']] as Item[]) : []),
   ];
+  const extra: Item[] = [
+    ...(canResolve ? ([['recovery', 'Recovery', '⟲'], ['audit', 'Audit', '☰']] as Item[]) : []),
+    ...(session.role === 'admin' ? ([['admin', 'Admin', '⚙']] as Item[]) : []),
+  ];
+  const showMore = more || extra.some(([id]) => id === tab);
+  const railButton = ([id, label, icon]: Item) => (
+    <Button key={id} variant={tab === id ? 'primary' : 'secondary'} onClick={() => setTab(id)}>
+      <span aria-hidden="true">{icon} </span>
+      <span aria-current={tab === id ? 'page' : undefined}>{label}</span>
+    </Button>
+  );
+
+  const notices: { id: string; key: NoticeKey; tone: 'info' | 'warn' | 'error'; content: ReactNode }[] = [];
+  if (warn)
+    notices.push({ id: 'idle', key: 'idle', tone: 'warn', content: (<><span role="alert">{copy.idleWarning}</span><Button variant="primary" onClick={() => setWarn(false)}>Stay signed in</Button></>) });
+  if (s.alert === 'CHAIN_FORK') notices.push({ id: 'chainFork', key: 'chainFork', tone: 'error', content: copy.chainFork });
+  if (s.alert === 'STORAGE_LOST') notices.push({ id: 'storageLost', key: 'storageLost', tone: 'error', content: copy.storageLost });
+  if (s.online)
+    for (const a of alerts)
+      notices.push({ id: `${a.code} ${a.detail}`, key: 'alert', tone: 'error', content: (<span><strong>{copy.alerts[a.code] ?? a.code}.</strong> {a.detail}</span>) });
+  if (s.alert === 'SERVER_BEHIND')
+    notices.push({ id: 'serverBehind', key: 'serverBehind', tone: 'warn', content: (<>{copy.serverBehind}{session.role === 'admin' && <Button onClick={() => setTab('recovery')}>Open Recovery</Button>}</>) });
+  if (!s.online) notices.push({ id: 'offline', key: 'offline', tone: 'warn', content: copy.offline });
+  if ((stale || s.unsynced >= 20) && tab !== 'changes')
+    notices.push({ id: 'unsynced', key: 'unsynced', tone: 'warn', content: (<>{copy.unsyncedWarning(s.unsynced, Math.max(staleMin, 0))}<Button onClick={() => setTab('changes')}>Save to file</Button></>) });
+  if (s.clockOffsetMs !== null && Math.abs(s.clockOffsetMs) > 120_000) notices.push({ id: 'clockSkew', key: 'clockSkew', tone: 'warn', content: copy.clockSkew(s.clockOffsetMs) });
+  if (!persisted) notices.push({ id: 'persist', key: 'persist', tone: 'warn', content: copy.persist });
+  if (update)
+    notices.push({ id: 'update', key: 'update', tone: 'info', content: (<>{copy.updateReady}<Button variant="primary" disabled={sending} onClick={update}>Install update</Button></>) });
+
+  const status = `${s.online ? 'Online' : 'Offline'} · ${s.unsynced === 0 ? 'all sent' : `${s.unsynced} not sent`}`;
   return (
     <>
-      <header className="sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-3 border-b-2 border-border bg-surface px-4 py-1">
-        <span className="font-semibold">Ward board</span>
-        <span className={s.online ? 'text-status-occupied' : 'text-status-pending'}>
-          <span aria-hidden="true">{s.online ? '● ' : '○ '}</span>
-          {s.online ? 'Online' : 'Offline'}
-        </span>
-        <Button onClick={() => setTab('changes')} label={`Unsynced: ${s.unsynced}. Open My changes`}>
-          <span className={stale ? 'text-status-pending' : ''}>
-            {stale && <span aria-hidden="true">⚠ </span>}Unsynced: {s.unsynced}
+      <header className="sticky top-0 z-10 flex min-h-14 items-center gap-3 border-b border-border bg-surface px-4 py-1">
+        {branding.logo && <img src={branding.logo} alt="" className="h-9 w-auto" />}
+        <span className="font-semibold">{branding.hospitalName ?? 'Ward board'}</span>
+        {branding.ward && <span className="hidden text-text-muted sm:inline">{branding.ward}</span>}
+        <Button onClick={() => setTab('changes')}>
+          <span className={s.online && !stale ? '' : 'text-status-pending'}>
+            <span aria-hidden="true">{s.online ? '● ' : '○ '}</span>
+            {status}
           </span>
         </Button>
-        <span className="ml-auto font-mono">{session.staffId}</span>
-        <Button onClick={() => setLocked(true)}>Lock</Button>
-        <Button onClick={() => engine.signOut()}>Sign out</Button>
-      </header>
-      <nav aria-label="Screens" className="flex gap-2 overflow-x-auto px-4 pt-3">
-        {tabs.map(([id, label]) => (
-          <Button key={id} variant={tab === id ? 'primary' : 'secondary'} onClick={() => setTab(id)}>
-            <span aria-current={tab === id ? 'page' : undefined}>{label}</span>
+        <div className="relative ml-auto" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
+          <Button expanded={menu} onClick={() => setMenu(!menu)}>
+            <span className="font-mono">{session.staffId}</span>
           </Button>
-        ))}
-      </nav>
-      <div className="flex flex-col gap-2 px-4 pt-3">
-        {!s.online && <Banner tone="warn">{copy.offline}</Banner>}
-        {s.alert === 'CHAIN_FORK' && <Banner tone="error">{copy.chainFork}</Banner>}
-        {s.alert === 'STORAGE_LOST' && <Banner tone="error">{copy.storageLost}</Banner>}
-        {s.alert === 'SERVER_BEHIND' && (
-          <Banner tone="warn">
-            {copy.serverBehind}
-            {session.role === 'admin' && <Button onClick={() => setTab('recovery')}>Open Recovery</Button>}
-          </Banner>
-        )}
-        {s.clockOffsetMs !== null && Math.abs(s.clockOffsetMs) > 120_000 && <Banner tone="warn">{copy.clockSkew(s.clockOffsetMs)}</Banner>}
-        {s.online &&
-          alerts.map((a) => (
-            <Banner key={`${a.code} ${a.detail}`} tone="error">
-              <span>
-                <strong>{copy.alerts[a.code] ?? a.code}.</strong> {a.detail}
-              </span>
-            </Banner>
-          ))}
-        {!persisted && <Banner tone="warn">{copy.persist}</Banner>}
-        {warn && (
-          <Banner tone="warn">
-            <span role="alert">{copy.idleWarning}</span>
-            <Button variant="primary" onClick={() => setWarn(false)}>
-              Stay signed in
+          {menu && (
+            <div className="absolute top-full right-0 z-20 mt-1 flex w-44 flex-col gap-2 rounded-xl border border-border bg-surface p-2 shadow-lg">
+              <Button wide onClick={() => (setMenu(false), setLocked(true))}>Lock</Button>
+              <Button wide onClick={() => (setMenu(false), engine.signOut())}>Sign out</Button>
+            </div>
+          )}
+        </div>
+      </header>
+      <div className="min-[900px]:flex">
+        <nav aria-label="Screens" className="flex gap-1 overflow-x-auto border-b border-border bg-surface p-2 min-[900px]:sticky min-[900px]:top-14 min-[900px]:h-[calc(100vh-3.5rem)] min-[900px]:w-44 min-[900px]:shrink-0 min-[900px]:flex-col min-[900px]:overflow-visible min-[900px]:border-r min-[900px]:border-b-0">
+          {main.map(railButton)}
+          {extra.length > 0 && (
+            <Button expanded={showMore} onClick={() => setMore(!showMore)}>
+              <span aria-hidden="true">⋯ </span>More
             </Button>
-          </Banner>
-        )}
-        {update && (
-          <Banner>
-            {copy.updateReady}
-            <Button variant="primary" disabled={sending} onClick={update}>
-              Install update
-            </Button>
-          </Banner>
-        )}
-        {(stale || s.unsynced >= 20) && tab !== 'changes' && (
-          <Banner tone="warn">
-            {copy.unsyncedWarning(s.unsynced, Math.max(staleMin, 0))}
-            <Button onClick={() => setTab('changes')}>Save to file</Button>
-          </Banner>
-        )}
+          )}
+          {showMore && extra.map(railButton)}
+        </nav>
+        <div className="min-w-0 flex-1">
+          <NoticeLine notices={sortNotices(notices)} />
+          {tab === 'board' && <BoardScreen engine={engine} bays={branding.bays} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
+          {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
+          {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
+          {tab === 'changes' && <MyChangesScreen engine={engine} isAdmin={session.role === 'admin'} />}
+          {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} recovering={alerts.some((a) => a.code === 'RECOVERING')} />}
+          {tab === 'audit' && <AuditScreen net={net} />}
+          {tab === 'admin' && <AdminScreen engine={engine} net={net} onBranding={showBranding} />}
+        </div>
       </div>
-      {tab === 'board' && <BoardScreen engine={engine} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
-      {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
-      {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
-      {tab === 'changes' && <MyChangesScreen engine={engine} isAdmin={session.role === 'admin'} />}
-      {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} recovering={alerts.some((a) => a.code === 'RECOVERING')} />}
-      {tab === 'audit' && <AuditScreen net={net} />}
-      {tab === 'admin' && <AdminScreen engine={engine} net={net} />}
       <LiveRegion message={announce} />
     </>
   );
 }
-

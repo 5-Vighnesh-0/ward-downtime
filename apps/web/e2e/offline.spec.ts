@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { CHROMIUM_ARGS } from '../playwright.config.ts';
 import {
-  admit, boardOf, configureBeds, owner, rename, resetDb, setUpTablet, startApi, stopApi, swReady, unlock,
+  admit, boardOf, configureBeds, owner, rename, resetDb, setUpTablet, startApi, stopApi, swReady, tab, unlock,
 } from './support.ts';
 
 test.beforeEach(async () => {
@@ -16,7 +16,7 @@ test.beforeEach(async () => {
 });
 test.afterAll(stopApi);
 
-const unsynced = (page: Page, n: number) => expect(page.getByText(`Unsynced: ${n}`, { exact: true })).toBeVisible();
+const unsynced = (page: Page, n: number) => expect(page.getByText(n === 0 ? /· all sent$/ : new RegExp(`· ${n} not sent$`))).toBeVisible();
 
 test('E2E-02: 5 offline changes survive closing the browser, then confirm when back online (acceptance 2)', async ({ playwright, browserName }) => {
   const dir = mkdtempSync(join(tmpdir(), 'wdb-e2e-'));
@@ -146,7 +146,7 @@ test('E2E-08: idle lock after 5 minutes, unlocked offline with the PIN (SEC-7)',
 
 test("E2E-08b: the ward's lock time, once the server accepts it, applies on another tablet (SEC-7)", async ({ page, browser }) => {
   await setUpTablet(page);
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await tab(page, 'Admin');
   await page.getByLabel('Number of beds (1 to 60)').fill('2');
   await page.getByLabel('Lock tablets after this many idle minutes (1 to 15)').fill('2');
   await page.getByRole('button', { name: 'Save ward settings' }).click();

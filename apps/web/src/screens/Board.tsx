@@ -1,6 +1,6 @@
 // Bed grid and bed sheet (design.md §10.3, §10.4; FR-1, FR-2, FR-10). No drag and drop anywhere (WCAG 2.5.7).
 import { useEffect, useState } from 'react';
-import { looksLikeIdentifier, type Board } from '@wdb/shared';
+import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { cardName, cardState, FILTERS, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
@@ -71,7 +71,7 @@ function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state:
   );
 }
 
-export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: SyncEngine; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
+export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');

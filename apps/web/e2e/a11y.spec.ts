@@ -1,7 +1,7 @@
 // A11Y-01 axe on every screen, A11Y-02 keyboard-only E2E-01, and the board filters (design.md §10.2, §10.5, §12.8).
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { admit, reconnect, resetDb, setUpTablet, startApi, stopApi, tab, twoTablets } from './support.ts';
+import { admit, reconnect, resetDb, setUpTablet, staffMenu, startApi, stopApi, tab, twoTablets } from './support.ts';
 
 test.beforeEach(async () => {
   await stopApi();
@@ -56,9 +56,9 @@ test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ b
   await tab(b, 'Unplaced');
   await expect(b.getByRole('button', { name: 'Admit Rowan Ashby to a bed' })).toBeVisible({ timeout: 20_000 });
   found.push(...(await axe(b, 'unplaced with a patient')));
-  await a.getByRole('button', { name: 'Lock' }).click();
+  await staffMenu(a, 'Lock');
   found.push(...(await axe(a, 'lock')));
-  await b.getByRole('button', { name: 'Sign out' }).click();
+  await staffMenu(b, 'Sign out');
   await expect(b.getByLabel('Staff ID')).toBeVisible();
   found.push(...(await axe(b, 'sign-in')));
   expect(found).toEqual([]);
@@ -119,7 +119,8 @@ test('A11Y-02: E2E-01 by keyboard only: two offline admits become a conflict and
   await expect(dialog.getByRole('button', { name: 'Keep Imani Calloway' })).toBeFocused();
   await a.keyboard.press('Enter');
   await expect(a.getByText(/^No conflicts\./)).toBeVisible();
-  await tabTo(a, 'Board');
+  await a.locator('body').focus(); // the side rail now comes before the screen, so start again from the top
+  await tabTo(a, /Board$/); // the rail button's text starts with its icon
   await a.keyboard.press('Enter');
   for (const p of [a, b]) await expect(p.getByRole('button', { name: 'Bed 4, Imani Calloway, confirmed' })).toBeVisible({ timeout: 20_000 });
   await a.context().close();
@@ -128,7 +129,7 @@ test('A11Y-02: E2E-01 by keyboard only: two offline admits become a conflict and
 
 test('board filters show only the matching beds, with counts', async ({ page }) => {
   await setUpTablet(page);
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await tab(page, 'Admin');
   await page.getByLabel('Number of beds (1 to 60)').fill('3');
   await page.getByRole('button', { name: 'Save ward settings' }).click();
   await page.getByRole('button', { name: 'Board', exact: true }).click();
