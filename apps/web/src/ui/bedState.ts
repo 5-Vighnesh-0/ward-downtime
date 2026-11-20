@@ -1,5 +1,5 @@
 // What one bed card shows (design.md §10.4): the optimistic view compared with the confirmed board.
-import type { Board, Note } from '@wdb/shared';
+import type { Bays, Board, Note } from '@wdb/shared';
 
 export type CardState =
   | { kind: 'empty' }
@@ -77,3 +77,25 @@ export function notesFor(view: Board, bedId: string): Note[] {
   const occupant = bed?.status === 'occupied' ? bed.occupant : null;
   return (view.notes?.[bedId] ?? []).filter((n) => n.patientId === occupant).reverse();
 }
+
+/** Display-only bays (spec 2026-11-18 §1.2): bay order first, beds in no bay last under "Other beds". */
+export function groupByBay<T extends { id: string }>(beds: T[], bays: Bays | null): { name: string; beds: T[] }[] {
+  if (!bays?.length) return [{ name: 'All beds', beds }];
+  const byId = new Map(beds.map((b) => [b.id, b]));
+  const placed = new Set<string>();
+  const groups = bays.map((bay) => ({
+    name: bay.name,
+    beds: bay.beds.flatMap((id) => {
+      const b = byId.get(id);
+      if (!b) return [];
+      placed.add(id);
+      return [b];
+    }),
+  }));
+  const other = beds.filter((b) => !placed.has(b.id));
+  return [...groups.filter((g) => g.beds.length > 0), ...(other.length ? [{ name: 'Other beds', beds: other }] : [])];
+}
+
+/** "8 occupied", "1 conflict": the counts row that replaces the filter buttons. */
+export const countLabel = (f: Exclude<Filter, 'All'>, n: number): string =>
+  f === 'Conflict' ? `${n} ${n === 1 ? 'conflict' : 'conflicts'}` : `${n} ${f.toLowerCase()}`;

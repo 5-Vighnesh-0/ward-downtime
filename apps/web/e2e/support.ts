@@ -69,13 +69,13 @@ export async function signIn(page: Page, staffId: string): Promise<void> {
   }).toPass({ timeout: 20_000 });
   await page.getByLabel('PIN (6 to 8 digits)').fill(PIN);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Beds' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Beds', exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
 export async function unlock(page: Page): Promise<void> {
   await page.getByLabel('PIN (6 to 8 digits)').fill(PIN);
   await page.getByRole('button', { name: 'Unlock' }).click();
-  await expect(page.getByRole('heading', { name: 'Beds' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Beds', exact: true })).toBeVisible();
 }
 
 export async function configureBeds(page: Page, n: number): Promise<void> {

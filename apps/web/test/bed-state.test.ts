@@ -1,7 +1,7 @@
 // Bed card states and accessible names (design.md §10.4, FR-10).
 import { describe, expect, it } from 'vitest';
 import { replay, type AnyEvent } from '@wdb/shared';
-import { cardName, cardState, FILTERS, matches, notesFor, taskSummary, type CardState } from '../src/ui/bedState.ts';
+import { cardName, cardState, countLabel, FILTERS, groupByBay, matches, notesFor, taskSummary, type CardState } from '../src/ui/bedState.ts';
 
 let n = 0;
 const ev = (type: AnyEvent['type'], payload: object, basedOn = 0): AnyEvent =>
@@ -96,5 +96,34 @@ describe('notesFor (FR-15)', () => {
     expect(notesFor(out, 'B01')).toEqual([]);
     const next = log(ward, admitA, n1, ev('DISCHARGE', { patientId: 'T-K3P-0001', bedId: 'B01' }), ev('ADMIT', { patientId: 'T-M7Q-0001', label: 'Mira Holt', bedId: 'B01' }));
     expect(notesFor(next, 'B01')).toEqual([]);
+  });
+});
+
+describe('groupByBay (spec 2026-11-18 §1.2)', () => {
+  const beds = ['B01', 'B02', 'B03', 'B04'].map((id) => ({ id }));
+  it('shows one group when no bays are set', () => {
+    expect(groupByBay(beds, null)).toEqual([{ name: 'All beds', beds }]);
+    expect(groupByBay(beds, [])).toEqual([{ name: 'All beds', beds }]);
+  });
+  it('groups by bay in bay order, ignores unknown beds, and puts the rest under Other beds', () => {
+    const bays = [{ name: 'Bay B', beds: ['B03', 'B99'] }, { name: 'Bay A', beds: ['B02', 'B01'] }];
+    expect(groupByBay(beds, bays)).toEqual([
+      { name: 'Bay B', beds: [{ id: 'B03' }] },
+      { name: 'Bay A', beds: [{ id: 'B02' }, { id: 'B01' }] },
+      { name: 'Other beds', beds: [{ id: 'B04' }] },
+    ]);
+  });
+  it('drops bays with no beds left after a filter', () => {
+    expect(groupByBay([{ id: 'B03' }], [{ name: 'Bay A', beds: ['B01'] }, { name: 'Bay B', beds: ['B03'] }])).toEqual([{ name: 'Bay B', beds: [{ id: 'B03' }] }]);
+  });
+});
+
+describe('countLabel', () => {
+  it('reads like the counts row', () => {
+    expect(countLabel('Occupied', 8)).toBe('8 occupied');
+    expect(countLabel('Empty', 3)).toBe('3 empty');
+    expect(countLabel('Conflict', 1)).toBe('1 conflict');
+    expect(countLabel('Conflict', 0)).toBe('0 conflicts');
+    expect(countLabel('Pending', 2)).toBe('2 pending');
   });
 });

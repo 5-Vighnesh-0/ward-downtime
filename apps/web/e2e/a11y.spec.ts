@@ -136,15 +136,15 @@ test('board filters show only the matching beds, with counts', async ({ page }) 
   await admit(page, 1, 'Rowan Ashby');
   const filters = page.getByRole('group', { name: 'Show beds' });
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible();
-  await filters.getByRole('button', { name: 'Empty (2)' }).click();
-  await expect(filters.getByRole('button', { name: 'Empty (2)' })).toHaveAttribute('aria-pressed', 'true');
+  await filters.getByRole('button', { name: '2 empty' }).click();
+  await expect(filters.getByRole('button', { name: '2 empty' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: /^Bed 1,/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Bed 3, empty' })).toBeVisible();
   await page.waitForTimeout(700); // past the double-tap guard
-  await filters.getByRole('button', { name: 'Conflict (0)' }).click();
+  await filters.getByRole('button', { name: '0 conflicts' }).click();
   await expect(page.getByText('No beds match this filter.')).toBeVisible();
   await page.waitForTimeout(700);
-  await filters.getByRole('button', { name: 'Occupied (1)' }).click();
+  await filters.getByRole('button', { name: '1 occupied' }).click();
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /empty$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Bed \d+, empty$/ })).toHaveCount(0);
 });

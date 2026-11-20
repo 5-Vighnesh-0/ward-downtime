@@ -3,14 +3,14 @@ import { useEffect, useState } from 'react';
 import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, FILTERS, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
+import { cardName, cardState, countLabel, FILTERS, groupByBay, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'], string> = {
-  empty: 'border-2 border-border bg-surface-raised',
-  occupied: 'border-2 border-status-occupied',
-  conflict: 'border-4 border-status-conflict',
-  pendingOut: 'border-2 border-dashed border-status-pending',
+  empty: 'border-2 border-dashed border-border bg-transparent',
+  occupied: 'border border-border bg-surface',
+  conflict: 'border-2 border-status-conflict bg-status-conflict-bg',
+  pendingOut: 'border-2 border-dashed border-status-pending bg-surface',
 };
 
 /** Re-renders every 30 s, so tasks turn overdue without a tap. */
@@ -23,22 +23,24 @@ function useNow(): number {
   return now;
 }
 
-function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state: CardState; tasks: TaskSummary; notes: number; onOpen: () => void }) {
+function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: string; selected: boolean; label: string; state: CardState; tasks: TaskSummary; notes: number; onOpen: () => void }) {
   const pending = (state.kind === 'occupied' && state.pending) || state.kind === 'pendingOut';
   const words = taskWords(tasks);
   const [noteWord] = noteWords(notes);
   return (
     <button
       type="button"
+      id={`bed-${id}`}
+      aria-current={selected ? 'true' : undefined}
       onClick={onOpen}
       aria-label={cardName(label, state, tasks, notes)}
-      className={`flex min-h-28 flex-col items-start gap-1 rounded-lg p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-dashed' : ''}`}
+      className={`flex min-h-24 flex-col items-start gap-1 rounded-xl p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-2 border-dashed border-status-pending' : ''} ${selected ? 'ring-2 ring-accent ring-offset-2' : ''}`}
     >
       {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
-      <span className="text-text-muted tabular-nums">{label}</span>{' '}
+      <span className="font-bold text-accent tabular-nums">{label}</span>{' '}
       {state.kind === 'empty' && <span className="text-text-muted">Empty</span>}
       {(state.kind === 'occupied' || state.kind === 'pendingOut') && (
-        <span className={`text-[22px] font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
+        <span className={`text-lg font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
       )}
       {state.kind === 'conflict' && (
         <span className="font-semibold text-status-conflict">
@@ -71,7 +73,7 @@ function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state:
   );
 }
 
-export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
+export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve }: { engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');
@@ -80,28 +82,38 @@ export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: S
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now), notes: notesFor(s.view, id).length }));
   const shown = beds.filter((b) => matches(filter, b.state));
+  const close = () => {
+    const was = open;
+    setOpen(null);
+    if (was) requestAnimationFrame(() => document.getElementById(`bed-${was}`)?.focus()); // WCAG 2.4.3: back to the tile
+  };
   return (
-    <main className="flex flex-col gap-4 p-4">
-      <h1 className="text-2xl font-semibold">Beds</h1>
+    <main className={`flex flex-col gap-4 p-4 ${open ? 'min-[900px]:pr-[27rem]' : ''}`}>
+      <h1 className="sr-only">Beds</h1>
       {beds.length === 0 && <p>{copy.noBeds + (isAdmin ? ' Use Admin → Ward beds.' : '')}</p>}
       {beds.length > 0 && (
         <div role="group" aria-label="Show beds" className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
-            <Button key={f} pressed={filter === f} variant={filter === f ? 'primary' : 'secondary'} onClick={() => setFilter(f)}>
-              {`${f} (${beds.filter((b) => matches(f, b.state)).length})`}
+          {FILTERS.filter((f) => f !== 'All').map((f) => (
+            <Button key={f} pressed={filter === f} variant={filter === f ? 'primary' : 'secondary'} onClick={() => setFilter(filter === f ? 'All' : f)}>
+              {countLabel(f, beds.filter((b) => matches(f, b.state)).length)}
             </Button>
           ))}
         </div>
       )}
       {beds.length > 0 && shown.length === 0 && <p role="status">No beds match this filter.</p>}
-      <ul className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
-        {shown.map((b) => (
-          <li key={b.id} className="grid">
-            <BedCard label={b.label} state={b.state} tasks={b.tasks} notes={b.notes} onOpen={() => setOpen(b.id)} />
-          </li>
-        ))}
-      </ul>
-      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={() => setOpen(null)} onResolve={onResolve} />}
+      {groupByBay(shown, bays).map((g) => (
+        <section key={g.name} aria-label={g.name} className="flex flex-col gap-2">
+          <h2 className="text-sm font-bold tracking-wider text-text-muted uppercase">{g.name}</h2>
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
+            {g.beds.map((b) => (
+              <li key={b.id} className="grid">
+                <BedCard id={b.id} selected={open === b.id} label={b.label} state={b.state} tasks={b.tasks} notes={b.notes} onOpen={() => setOpen(b.id)} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {open && <BedSheet key={open} engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={close} onResolve={onResolve} />}
     </main>
   );
 }
