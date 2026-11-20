@@ -81,6 +81,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const [branding, setBranding] = useState<Branding>(NO_BRANDING);
   const [more, setMore] = useState(false);
   const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const showBranding = (b: Branding) => (setBranding(b), applyAccent(b.accent));
   const watchesAlerts = session?.role === 'charge' || session?.role === 'admin';
 
@@ -236,11 +237,12 @@ function Ready({ engine }: { engine: SyncEngine }) {
         {branding.ward && <span className="hidden text-text-muted sm:inline">{branding.ward}</span>}
         <Button onClick={() => setTab('changes')}>
           <span className={s.online && !stale ? '' : 'text-status-pending'}>
+            {stale && <span aria-hidden="true">⚠ </span>}
             <span aria-hidden="true">{s.online ? '● ' : '○ '}</span>
             {status}
           </span>
         </Button>
-        <div className="relative ml-auto" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
+        <div className="relative ml-auto" ref={menuRef} onKeyDown={(e) => e.key === 'Escape' && (setMenu(false), menuRef.current?.querySelector('button')?.focus())}>
           <Button expanded={menu} onClick={() => setMenu(!menu)}>
             <span className="font-mono">{session.staffId}</span>
           </Button>
@@ -256,7 +258,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
         <nav aria-label="Screens" className="flex gap-1 overflow-x-auto border-b border-border bg-surface p-2 min-[900px]:sticky min-[900px]:top-14 min-[900px]:h-[calc(100vh-3.5rem)] min-[900px]:w-44 min-[900px]:shrink-0 min-[900px]:flex-col min-[900px]:overflow-visible min-[900px]:border-r min-[900px]:border-b-0">
           {main.map(railButton)}
           {extra.length > 0 && (
-            <Button expanded={showMore} onClick={() => setMore(!showMore)}>
+            <Button expanded={showMore} disabled={extra.some(([id]) => id === tab)} onClick={() => setMore(!showMore)}>
               <span aria-hidden="true">⋯ </span>More
             </Button>
           )}
