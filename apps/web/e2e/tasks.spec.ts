@@ -24,6 +24,7 @@ async function markDone(p: Page, title: string): Promise<void> {
 test('a task added on one tablet shows overdue on both; two offline completions converge (FR-15)', async ({ browser }) => {
   const { a, b } = await twoTablets(browser);
   await a.getByRole('button', { name: 'Bed 2, empty' }).click();
+  await a.getByRole('button', { name: 'Add a task' }).click();
   const title = a.getByLabel('New task');
   await title.fill(`MRN ${'1234567'}`); // built at runtime so the repo's synthetic-data check sees no MRN
   await expect(a.getByText(/^This looks like an ID/)).toBeVisible();
@@ -56,18 +57,22 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   const { a, b } = await twoTablets(browser);
   await admit(a, 1, 'Rowan Ashby');
   await a.getByRole('button', { name: /^Bed 1, Rowan Ashby, / }).click();
+  await a.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
+  await a.getByRole('button', { name: 'Add a note' }).click();
   await a.getByLabel('New handoff note').fill('Family visiting after lunch');
   await a.getByRole('button', { name: 'Add note' }).click();
   await expect(a.getByText('Family visiting after lunch')).toBeVisible();
   await a.keyboard.press('Escape');
 
   await b.getByRole('button', { name: 'Bed 1, Rowan Ashby, 1 note, confirmed' }).click({ timeout: 20_000 }); // the card counts the note
+  await b.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
   await expect(b.getByText('Family visiting after lunch')).toBeVisible();
   await b.getByRole('button', { name: 'Discharge' }).click();
   await b.getByRole('dialog').getByRole('button', { name: 'Discharge' }).click();
   await expect(b.getByRole('button', { name: 'Bed 1, empty' })).toBeVisible({ timeout: 20_000 });
   await admit(b, 1, 'Mira Holt');
   await b.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click();
+  await b.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
   await expect(b.getByText('No handoff notes for this bed.')).toBeVisible();
   await b.keyboard.press('Escape');
   await expect(b.getByRole('button', { name: /^Bed 1, Mira Holt, (not sent|confirmed)/ })).toBeVisible(); // no note count for the new patient
@@ -75,6 +80,7 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   const c = await (await browser.newContext()).newPage();
   await setUpTablet(c, 'clerk', 'Tablet C');
   await c.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click({ timeout: 20_000 });
+  await c.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
   await expect(c.getByRole('heading', { name: 'Handoff notes' })).toBeVisible();
   await expect(c.getByLabel('New handoff note')).toHaveCount(0);
   for (const p of [a, b, c]) await p.context().close();

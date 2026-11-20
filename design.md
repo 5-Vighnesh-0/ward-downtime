@@ -1094,7 +1094,7 @@ State ownership: `syncEngine` (plain TS, no React) owns Dexie, the outbox, SSE a
 ### 10.3 Key interaction flows
 
 - **Admit:** tap empty bed → sheet → label field (autofocus, visible label "Patient name label") → temp ID shown read-only ("ID: T-K3P-0008") → **Admit to bed 4**. The card shows Pending.
-- **Transfer:** occupied bed → **Move to another bed** → grid of empty beds only (occupied and conflicted beds are disabled with text) → tap → **Move Rowan Ashby to bed 9**.
+- **Transfer:** occupied bed → **Move bed** → grid of empty beds only (occupied and conflicted beds are disabled with text) → tap → **Move Rowan Ashby to bed 9**.
 - **Discharge:** occupied bed → **Discharge** → confirm dialog *"Discharge Rowan Ashby from bed 4?"* with **Discharge** / **Keep in bed**.
 - **Resolve:** Conflicts → card shows bed, each candidate's label, temp ID, device label, staff ID and device time → choose **Keep this patient** on one, or **Keep neither** → confirm *"Keep Imani Calloway in bed 4? Rowan Ashby will move to Unplaced."*
 

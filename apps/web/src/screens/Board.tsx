@@ -4,7 +4,7 @@ import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { cardName, cardState, countLabel, FILTERS, groupByBay, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
-import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
+import { Button, Field, Panel, useEngine } from '../ui/kit.tsx';
 
 const cardStyle: Record<CardState['kind'] | 'occupiedPending', string> = {
   empty: 'border-2 border-dashed border-border bg-transparent',
@@ -121,12 +121,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
   const [mode, setMode] = useState<'main' | 'move' | 'rename' | 'discharge'>('main');
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string>();
-  const extras = (
-    <>
-      <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} />
-      <BedNotes engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />
-    </>
-  );
+  const extras = <BedExtras engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />;
   const act = async (f: () => Promise<unknown>) => {
     try {
       await f();
@@ -138,7 +133,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
 
   if (state.kind === 'empty')
     return (
-      <Sheet title={`${bedLabel}: admit`} open onClose={p.onClose}>
+      <Panel title={`${bedLabel}: admit`} onClose={p.onClose}>
         <form className="flex flex-col gap-4" onSubmit={(e) => (e.preventDefault(), void act(() => p.engine.admit({ label: label.trim(), bedId: p.bedId })))}>
           <Field label="Patient name label" value={label} onChange={setLabel} maxLength={40} autoFocus error={error} />
           <p className="text-text-muted">
@@ -149,11 +144,11 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         </form>
         {extras}
-      </Sheet>
+      </Panel>
     );
   if (state.kind === 'conflict')
     return (
-      <Sheet title={`${bedLabel}: ${copy.conflictTitle(state.count)}`} open onClose={p.onClose}>
+      <Panel title={`${bedLabel}: ${copy.conflictTitle(state.count)}`} onClose={p.onClose}>
         <p>{copy.conflictHelp}</p>
         {p.onResolve && (
           <Button variant="primary" wide onClick={p.onResolve}>
@@ -161,19 +156,19 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         )}
         {extras}
-      </Sheet>
+      </Panel>
     );
   if (state.kind === 'pendingOut')
     return (
-      <Sheet title={bedLabel} open onClose={p.onClose}>
-        <p>{state.label} has a pending move or discharge. It shows as confirmed once the ward server has it.</p>
+      <Panel title={bedLabel} onClose={p.onClose}>
+        <p>{state.label}: move or discharge not sent yet. It shows as confirmed once the ward server has it.</p>
         {extras}
-      </Sheet>
+      </Panel>
     );
 
   const { patientId, label: name } = state;
   return (
-    <Sheet title={`${bedLabel}: ${name}`} open onClose={p.onClose}>
+    <Panel title={`${bedLabel}: ${name}`} onClose={p.onClose}>
       <p className="text-text-muted">
         ID: <span className="font-mono">{patientId}</span>
         {state.pending && ' · Not sent'}
@@ -184,14 +179,10 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
         </p>
       )}
       {mode === 'main' && (
-        <div className="flex flex-col gap-2">
-          <Button wide onClick={() => setMode('move')}>
-            Move to another bed
-          </Button>
-          <Button wide onClick={() => (setLabel(name), setMode('rename'))}>
-            Change name label
-          </Button>
-          <Button wide variant="destructive" onClick={() => setMode('discharge')}>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setMode('move')}>Move bed</Button>
+          <Button onClick={() => (setLabel(name), setMode('rename'))}>Rename</Button>
+          <Button variant="destructive" onClick={() => setMode('discharge')}>
             Discharge
           </Button>
         </div>
@@ -237,7 +228,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
         </div>
       )}
       {extras}
-    </Sheet>
+    </Panel>
   );
 }
 
@@ -252,12 +243,33 @@ function dueAtFrom(hhmm: string, now = new Date()): string {
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** Tasks and notes as two tabs with counts (spec 2026-11-18 §1.3). */
+function BedExtras(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
+  const [show, setShow] = useState<'tasks' | 'notes'>('tasks');
+  const tasks = Object.values(p.board.tasks ?? {}).filter((t) => t.bedId === p.bedId && t.status === 'open').length;
+  const notes = notesFor(p.board, p.bedId).length;
+  return (
+    <>
+      <div role="group" aria-label="Show" className="flex gap-1 rounded-xl bg-surface-raised p-1">
+        <Button pressed={show === 'tasks'} variant={show === 'tasks' ? 'primary' : 'secondary'} onClick={() => setShow('tasks')}>
+          {`Tasks · ${tasks}`}
+        </Button>
+        <Button pressed={show === 'notes'} variant={show === 'notes' ? 'primary' : 'secondary'} onClick={() => setShow('notes')}>
+          {`Notes · ${notes}`}
+        </Button>
+      </div>
+      {show === 'tasks' ? <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} /> : <BedNotes engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />}
+    </>
+  );
+}
+
 /** FR-15 tasks on this bed. Free text follows the SEC-16 policy: short, no clinical or personal details. */
 function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string }) {
   const [title, setTitle] = useState('');
   const [due, setDue] = useState('');
   const [assignee, setAssignee] = useState('');
   const [error, setError] = useState<string>();
+  const [adding, setAdding] = useState(false);
   const now = useNow();
   const open = Object.entries(p.board.tasks ?? {}).filter(([, t]) => t.bedId === p.bedId && t.status === 'open');
   const t = title.trim();
@@ -274,7 +286,7 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
     }
   };
   return (
-    <section aria-labelledby={`tasks-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+    <section aria-labelledby={`tasks-${p.bedId}`} className="flex flex-col gap-3">
       <h3 id={`tasks-${p.bedId}`} className="text-lg font-semibold">
         Tasks
       </h3>
@@ -298,27 +310,37 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           );
         })}
       </ul>
-      <form
-        className="flex flex-col gap-3"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
-          if (await run(() => p.engine.record('TASK_CREATED', payload))) {
-            setTitle('');
-            setDue('');
-            setAssignee('');
-          }
-        }}
-      >
-        <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} />
-        <div className="flex flex-wrap gap-3">
-          <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
-          <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
-        </div>
-        <Button type="submit" disabled={!t || !!titleError || !assigneeOk}>
-          Add task
+      {adding ? (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
+            if (await run(() => p.engine.record('TASK_CREATED', payload))) {
+              setTitle('');
+              setDue('');
+              setAssignee('');
+              setAdding(false);
+            }
+          }}
+        >
+          <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} autoFocus />
+          <div className="flex flex-wrap gap-3">
+            <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
+            <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" variant="primary" disabled={!t || !!titleError || !assigneeOk}>
+              Add task
+            </Button>
+            <Button onClick={() => setAdding(false)}>Cancel</Button>
+          </div>
+        </form>
+      ) : (
+        <Button onClick={() => setAdding(true)}>
+          <span aria-hidden="true">+ </span>Add a task
         </Button>
-      </form>
+      )}
     </section>
   );
 }
@@ -327,12 +349,13 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
 function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string>();
+  const [adding, setAdding] = useState(false);
   const notes = notesFor(p.board, p.bedId);
   const confirmed = new Set(notesFor(p.confirmed, p.bedId).map((n) => n.eventId));
   const t = text.trim();
   const textError = t && looksLikeIdentifier(t) ? copy.noIdentifiers : undefined;
   return (
-    <section aria-labelledby={`notes-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+    <section aria-labelledby={`notes-${p.bedId}`} className="flex flex-col gap-3">
       <h3 id={`notes-${p.bedId}`} className="text-lg font-semibold">
         Handoff notes
       </h3>
@@ -351,26 +374,35 @@ function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           ))}
         </ul>
       )}
-      {p.canNote && (
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            try {
-              setError(undefined);
-              await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
-              setText('');
-            } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
-            }
-          }}
-        >
-          <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} />
-          <Button type="submit" disabled={!t || !!textError}>
-            Add note
+      {p.canNote &&
+        (adding ? (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                setError(undefined);
+                await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
+                setText('');
+                setAdding(false);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
+            }}
+          >
+            <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} autoFocus />
+            <div className="flex gap-2">
+              <Button type="submit" variant="primary" disabled={!t || !!textError}>
+                Add note
+              </Button>
+              <Button onClick={() => setAdding(false)}>Cancel</Button>
+            </div>
+          </form>
+        ) : (
+          <Button onClick={() => setAdding(true)}>
+            <span aria-hidden="true">+ </span>Add a note
           </Button>
-        </form>
-      )}
+        ))}
     </section>
   );
 }

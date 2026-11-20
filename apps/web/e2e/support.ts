@@ -95,7 +95,7 @@ export async function admit(page: Page, bed: number, label: string): Promise<voi
 
 export async function rename(page: Page, bed: number, from: string, to: string): Promise<void> {
   await page.getByRole('button', { name: new RegExp(`^Bed ${bed}, ${from}, `) }).click();
-  await page.getByRole('button', { name: 'Change name label' }).click();
+  await page.getByRole('button', { name: 'Rename' }).click();
   await page.getByLabel('Patient name label').fill(to);
   await page.getByRole('button', { name: 'Save name label' }).click();
   await expect(page.getByRole('button', { name: new RegExp(`^Bed ${bed}, ${to}, `) })).toBeVisible();
