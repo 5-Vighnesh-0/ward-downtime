@@ -82,6 +82,7 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   await c.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click({ timeout: 20_000 });
   await c.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
   await expect(c.getByRole('heading', { name: 'Handoff notes' })).toBeVisible();
+  await expect(c.getByRole('button', { name: 'Add a note' })).toHaveCount(0);
   await expect(c.getByLabel('New handoff note')).toHaveCount(0);
   for (const p of [a, b, c]) await p.context().close();
 });

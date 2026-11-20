@@ -1,5 +1,5 @@
 // Bed grid and bed sheet (design.md §10.3, §10.4; FR-1, FR-2, FR-10). No drag and drop anywhere (WCAG 2.5.7).
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
@@ -243,6 +243,17 @@ function dueAtFrom(hhmm: string, now = new Date()): string {
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** WCAG 2.4.3: when the add form closes, focus goes back to the button that opened it (not on first mount). */
+function useReturnFocus(adding: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !adding) ref.current?.querySelector('button')?.focus();
+    was.current = adding;
+  }, [adding]);
+  return ref;
+}
+
 /** Tasks and notes as two tabs with counts (spec 2026-11-18 §1.3). */
 function BedExtras(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
   const [show, setShow] = useState<'tasks' | 'notes'>('tasks');
@@ -270,6 +281,7 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
   const [assignee, setAssignee] = useState('');
   const [error, setError] = useState<string>();
   const [adding, setAdding] = useState(false);
+  const addRef = useReturnFocus(adding);
   const now = useNow();
   const open = Object.entries(p.board.tasks ?? {}).filter(([, t]) => t.bedId === p.bedId && t.status === 'open');
   const t = title.trim();
@@ -310,37 +322,39 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           );
         })}
       </ul>
-      {adding ? (
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
-            if (await run(() => p.engine.record('TASK_CREATED', payload))) {
-              setTitle('');
-              setDue('');
-              setAssignee('');
-              setAdding(false);
-            }
-          }}
-        >
-          <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} autoFocus />
-          <div className="flex flex-wrap gap-3">
-            <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
-            <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" variant="primary" disabled={!t || !!titleError || !assigneeOk}>
-              Add task
-            </Button>
-            <Button onClick={() => setAdding(false)}>Cancel</Button>
-          </div>
-        </form>
-      ) : (
-        <Button onClick={() => setAdding(true)}>
-          <span aria-hidden="true">+ </span>Add a task
-        </Button>
-      )}
+      <div ref={addRef}>
+          {adding ? (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
+              if (await run(() => p.engine.record('TASK_CREATED', payload))) {
+                setTitle('');
+                setDue('');
+                setAssignee('');
+                setAdding(false);
+              }
+            }}
+          >
+            <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} autoFocus />
+            <div className="flex flex-wrap gap-3">
+              <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
+              <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" variant="primary" disabled={!t || !!titleError || !assigneeOk}>
+                Add task
+              </Button>
+              <Button onClick={() => setAdding(false)}>Cancel</Button>
+            </div>
+          </form>
+        ) : (
+          <Button onClick={() => setAdding(true)}>
+            <span aria-hidden="true">+ </span>Add a task
+          </Button>
+        )}
+      </div>
     </section>
   );
 }
@@ -350,6 +364,7 @@ function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
   const [text, setText] = useState('');
   const [error, setError] = useState<string>();
   const [adding, setAdding] = useState(false);
+  const addRef = useReturnFocus(adding);
   const notes = notesFor(p.board, p.bedId);
   const confirmed = new Set(notesFor(p.confirmed, p.bedId).map((n) => n.eventId));
   const t = text.trim();
@@ -374,35 +389,38 @@ function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           ))}
         </ul>
       )}
-      {p.canNote &&
-        (adding ? (
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                setError(undefined);
-                await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
-                setText('');
-                setAdding(false);
-              } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
-              }
-            }}
-          >
-            <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} autoFocus />
-            <div className="flex gap-2">
-              <Button type="submit" variant="primary" disabled={!t || !!textError}>
-                Add note
-              </Button>
-              <Button onClick={() => setAdding(false)}>Cancel</Button>
-            </div>
-          </form>
-        ) : (
-          <Button onClick={() => setAdding(true)}>
-            <span aria-hidden="true">+ </span>Add a note
-          </Button>
-        ))}
+      {p.canNote && (
+        <div ref={addRef}>
+          {adding ? (
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  setError(undefined);
+                  await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
+                  setText('');
+                  setAdding(false);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                }
+              }}
+            >
+              <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} autoFocus />
+              <div className="flex gap-2">
+                <Button type="submit" variant="primary" disabled={!t || !!textError}>
+                  Add note
+                </Button>
+                <Button onClick={() => setAdding(false)}>Cancel</Button>
+              </div>
+            </form>
+          ) : (
+            <Button onClick={() => setAdding(true)}>
+              <span aria-hidden="true">+ </span>Add a note
+            </Button>
+          )}
+        </div>
+      )}
     </section>
   );
 }
