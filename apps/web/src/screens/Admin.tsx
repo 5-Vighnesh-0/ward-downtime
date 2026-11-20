@@ -1,10 +1,11 @@
 // Online-only screens (design.md §10.1): Admin (devices, staff, ward beds) and Audit (FR-14, SEC-6, SEC-18).
 import { useCallback, useEffect, useId, useState } from 'react';
-import type { Branding, Role } from '@wdb/shared';
+import { contrastOnWhite, darkenToContrast, MIN_CONTRAST, type Bays, type Branding, type Role } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import { ApiError, request, type Net } from '../sync/device.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { Banner, Button, Field, useEngine } from '../ui/kit.tsx';
+import { colourFromFile } from '../ui/logoColor.ts';
 import { AuditExport } from './Recovery.tsx';
 
 const errText = (e: unknown) => (e instanceof ApiError ? `The ward server refused this (${e.code}).` : copy.needsServer);
@@ -29,7 +30,7 @@ function useOnline<T>(net: Net, path: string): { data: T | null; error: string |
 
 function Section(p: { title: string; children: React.ReactNode }) {
   return (
-    <section className="flex flex-col gap-3 rounded-lg border-2 border-border p-4">
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
       <h2 className="text-xl font-semibold">{p.title}</h2>
       {p.children}
     </section>
@@ -283,10 +284,115 @@ function HealthPanel({ net }: { net: Net }) {
   );
 }
 
-export function AdminScreen({ engine, net }: { engine: SyncEngine; net: Net; onBranding: (b: Branding) => void }) {
+/** FR-16: hospital name, logo, colour (picked from the logo, adjustable) and display-only bays. */
+function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: Net; onSaved: (b: Branding) => void }) {
+  const s = useEngine(engine);
+  const { data, error } = useOnline<Branding>(net, '/api/v1/branding');
+  const [name, setName] = useState('');
+  const [accent, setAccent] = useState('#0e7490');
+  const [bays, setBays] = useState<Bays>([]);
+  const [msg, setMsg] = useState<string>();
+  const fileId = useId();
+  useEffect(() => {
+    if (!data) return;
+    setName(data.hospitalName ?? '');
+    setAccent(data.accent ?? '#0e7490');
+    setBays(data.bays ?? []);
+  }, [data]);
+  if (error) return <p>{error}</p>;
+  const tooLight = contrastOnWhite(accent) < MIN_CONTRAST;
+  const beds = Object.entries(s.confirmed.beds).sort(([a], [b]) => a.localeCompare(b));
+  const setBay = (i: number, bay: Bays[number]) => setBays(bays.map((b, j) => (j === i ? bay : b)));
+  const save = async () => {
+    const kept = bays.filter((b) => b.name.trim() && b.beds.length > 0).map((b) => ({ ...b, name: b.name.trim() }));
+    try {
+      const b = (await (await request(net, 'PUT', '/api/v1/admin/branding', { hospitalName: name.trim() || null, accent, bays: kept.length ? kept : null })).json()) as Branding;
+      onSaved(b);
+      setMsg('Saved. Every tablet shows it after its next sync.');
+    } catch (e) {
+      setMsg(errText(e));
+    }
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <Field label="Hospital name" value={name} onChange={setName} maxLength={60} />
+      <div className="flex flex-col gap-1">
+        <label htmlFor={fileId} className="font-semibold">
+          Hospital logo
+        </label>
+        <p className="text-text-muted">A PNG or JPEG file from your hospital, up to 200 KB. The board picks its colour from it.</p>
+        <input
+          id={fileId}
+          type="file"
+          accept="image/png,image/jpeg"
+          className="min-h-12"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+              onSaved((await (await request(net, 'PUT', '/api/v1/admin/branding/logo', f)).json()) as Branding);
+              const picked = await colourFromFile(f).catch(() => null);
+              if (picked) setAccent(darkenToContrast(picked));
+              setMsg('Logo saved. Check the colour below, then save.');
+            } catch (err) {
+              setMsg(errText(err));
+            }
+          }}
+        />
+        {data?.logo && <img src={data.logo} alt="Current hospital logo" className="h-12 w-auto self-start" />}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-3 font-semibold">
+          Hospital colour
+          <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)} className="h-12 w-16" />
+        </label>
+        {tooLight && (
+          <>
+            <span role="alert" className="font-semibold text-status-error">
+              Too light to read on white.
+            </span>
+            <Button onClick={() => setAccent(darkenToContrast(accent))}>Make it darker</Button>
+          </>
+        )}
+      </div>
+      <fieldset className="flex flex-col gap-3">
+        <legend className="mb-2 font-semibold">Bays (for the ward map; does not change any patient record)</legend>
+        {bays.map((bay, i) => (
+          <div key={i} className="flex flex-col gap-2 rounded-xl border border-border p-3">
+            <Field label={`Bay ${i + 1} name`} value={bay.name} maxLength={30} onChange={(v) => setBay(i, { ...bay, name: v })} />
+            <div role="group" aria-label={`Beds in bay ${i + 1}`} className="flex flex-wrap gap-2">
+              {beds.map(([id, bed]) => (
+                <label key={id} className="flex min-h-12 items-center gap-2 rounded-lg border border-border px-3">
+                  <input
+                    type="checkbox"
+                    checked={bay.beds.includes(id)}
+                    disabled={bays.some((b, j) => j !== i && b.beds.includes(id))}
+                    onChange={(e) => setBay(i, { ...bay, beds: e.target.checked ? [...bay.beds, id] : bay.beds.filter((x) => x !== id) })}
+                  />
+                  {bed.label}
+                </label>
+              ))}
+            </div>
+            <Button onClick={() => setBays(bays.filter((_, j) => j !== i))}>Remove bay {i + 1}</Button>
+          </div>
+        ))}
+        <Button onClick={() => setBays([...bays, { name: `Bay ${String.fromCharCode(65 + bays.length)}`, beds: [] }])}>Add a bay</Button>
+      </fieldset>
+      <Button variant="primary" disabled={tooLight} onClick={save}>
+        Save hospital settings
+      </Button>
+      {msg && <p role="status">{msg}</p>}
+    </div>
+  );
+}
+
+export function AdminScreen({ engine, net, onBranding }: { engine: SyncEngine; net: Net; onBranding: (b: Branding) => void }) {
   return (
     <main className="flex flex-col gap-4 p-4">
       <h1 className="text-2xl font-semibold">Admin</h1>
+      <Section title="Hospital">
+        <HospitalSettings engine={engine} net={net} onSaved={onBranding} />
+      </Section>
       <Section title="Ward server health">
         <HealthPanel net={net} />
       </Section>

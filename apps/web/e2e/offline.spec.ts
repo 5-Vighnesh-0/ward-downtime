@@ -161,3 +161,12 @@ test("E2E-08b: the ward's lock time, once the server accepts it, applies on anot
   await expect(other.getByRole('heading', { name: 'Locked' })).toBeVisible();
   await other.context().close();
 });
+
+test('an admin sets the hospital name and the top bar shows it (FR-16)', async ({ page }) => {
+  await setUpTablet(page);
+  await tab(page, 'Admin');
+  await page.getByLabel('Hospital name').fill('Demo General Hospital');
+  await page.getByRole('button', { name: 'Save hospital settings' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  await expect(page.getByText('Demo General Hospital').first()).toBeVisible();
+});
