@@ -1,15 +1,16 @@
 // Bed grid and bed sheet (design.md §10.3, §10.4; FR-1, FR-2, FR-10). No drag and drop anywhere (WCAG 2.5.7).
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
 import { cardName, cardState, countLabel, FILTERS, groupByBay, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
 import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
 
-const cardStyle: Record<CardState['kind'], string> = {
+const cardStyle: Record<CardState['kind'] | 'occupiedPending', string> = {
   empty: 'border-2 border-dashed border-border bg-transparent',
   occupied: 'border border-border bg-surface',
   conflict: 'border-2 border-status-conflict bg-status-conflict-bg',
+  occupiedPending: 'border-2 border-dashed border-status-pending bg-surface',
   pendingOut: 'border-2 border-dashed border-status-pending bg-surface',
 };
 
@@ -27,6 +28,12 @@ function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: str
   const pending = (state.kind === 'occupied' && state.pending) || state.kind === 'pendingOut';
   const words = taskWords(tasks);
   const [noteWord] = noteWords(notes);
+  // One wrapping meta line (spec: at most one per tile). The spaces keep visible words in the accessible name (WCAG 2.5.3).
+  const metaParts: { cls: string; node: ReactNode }[] = [
+    ...words.map((w) => ({ cls: tasks.overdue ? 'font-semibold text-status-error' : 'text-text-muted', node: w })),
+    ...(noteWord ? [{ cls: 'text-text-muted', node: noteWord }] : []),
+    ...(pending ? [{ cls: 'font-semibold text-status-pending', node: <><span aria-hidden="true">🕓 </span>Not sent</> }] : []),
+  ];
   return (
     <button
       type="button"
@@ -34,10 +41,10 @@ function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: str
       aria-current={selected ? 'true' : undefined}
       onClick={onOpen}
       aria-label={cardName(label, state, tasks, notes)}
-      className={`flex min-h-24 flex-col items-start gap-1 rounded-xl p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-2 border-dashed border-status-pending' : ''} ${selected ? 'ring-2 ring-accent ring-offset-2' : ''}`}
+      className={`flex min-h-24 flex-col items-start gap-1 rounded-xl p-3 text-left ${cardStyle[state.kind === 'occupied' && pending ? 'occupiedPending' : state.kind]} ${selected ? 'ring-2 ring-accent ring-offset-2' : ''}`}
     >
       {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
-      <span className="font-bold text-accent tabular-nums">{label}</span>{' '}
+      <span className="text-xl font-bold text-accent tabular-nums">{label}</span>{' '}
       {state.kind === 'empty' && <span className="text-text-muted">Empty</span>}
       {(state.kind === 'occupied' || state.kind === 'pendingOut') && (
         <span className={`text-lg font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
@@ -48,25 +55,15 @@ function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: str
           {copy.conflictTitle(state.count)}
         </span>
       )}
-      {words.length > 0 && ' '}
-      {words.length > 0 && (
-        <span className={tasks.overdue ? 'font-semibold text-status-error' : 'text-text-muted'}>
-          {words[0]}
-          {words[1] && (
-            <>
-              {' '}
-              <span aria-hidden="true">· </span>
-              {words[1]}
-            </>
-          )}
-        </span>
-      )}
-      {noteWord && ' '}
-      {noteWord && <span className="text-text-muted">{noteWord}</span>}
-      {pending && ' '}
-      {pending && (
-        <span className="font-semibold text-status-pending">
-          <span aria-hidden="true">🕓 </span>Pending
+      {metaParts.length > 0 && ' '}
+      {metaParts.length > 0 && (
+        <span className="flex flex-wrap gap-x-1">
+          {metaParts.map((m, i) => (
+            <span key={i} className={m.cls}>
+              {i > 0 && <span aria-hidden="true">· </span>}
+              {m.node}
+            </span>
+          ))}
         </span>
       )}
     </button>
@@ -101,9 +98,9 @@ export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve }: { eng
         </div>
       )}
       {beds.length > 0 && shown.length === 0 && <p role="status">No beds match this filter.</p>}
-      {groupByBay(shown, bays).map((g) => (
-        <section key={g.name} aria-label={g.name} className="flex flex-col gap-2">
-          <h2 className="text-sm font-bold tracking-wider text-text-muted uppercase">{g.name}</h2>
+      {groupByBay(shown, bays).map((g, i) => (
+        <section key={i} aria-labelledby={`bay-${i}`} className="flex flex-col gap-2">
+          <h2 id={`bay-${i}`} className="text-sm font-bold tracking-wider text-text-muted uppercase">{g.name}</h2>
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
             {g.beds.map((b) => (
               <li key={b.id} className="grid">
@@ -179,7 +176,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
     <Sheet title={`${bedLabel}: ${name}`} open onClose={p.onClose}>
       <p className="text-text-muted">
         ID: <span className="font-mono">{patientId}</span>
-        {state.pending && ' · Pending'}
+        {state.pending && ' · Not sent'}
       </p>
       {error && (
         <p role="alert" className="font-semibold text-status-error">
@@ -292,7 +289,7 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
                 <span className="font-semibold">{task.title}</span>
                 {task.assignee && ` · for ${task.assignee}`}
                 {task.dueAt && <span className={overdue ? 'font-semibold text-status-error' : ''}>{` · ${overdue ? 'overdue since' : 'due'} ${timeOf(task.dueAt)}`}</span>}
-                {pending && <span className="text-status-pending"> · Pending</span>}
+                {pending && <span className="text-status-pending"> · Not sent</span>}
               </span>
               <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
                 Done
@@ -348,7 +345,7 @@ function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
               <p>{n.text}</p>
               <p className="text-text-muted">
                 {n.by}, {timeOf(n.at)}
-                {!confirmed.has(n.eventId) && <span className="text-status-pending"> · Pending</span>}
+                {!confirmed.has(n.eventId) && <span className="text-status-pending"> · Not sent</span>}
               </p>
             </li>
           ))}

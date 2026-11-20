@@ -44,11 +44,11 @@ export function cardName(bedLabel: string, s: CardState, tasks?: TaskSummary, no
     case 'empty':
       return `${bedLabel}, empty${t}`;
     case 'occupied':
-      return `${bedLabel}, ${s.label}${t}, ${s.pending ? 'pending, not yet confirmed by ward server' : 'confirmed'}`;
+      return `${bedLabel}, ${s.label}${t}, ${s.pending ? 'not sent, not yet confirmed by ward server' : 'confirmed'}`;
     case 'conflict':
       return `${bedLabel}, conflict: ${s.count} patients${t}, charge nurse must choose`; // contains the visible text (WCAG 2.5.3)
     case 'pendingOut':
-      return `${bedLabel}, ${s.label}${t}, pending move or discharge`;
+      return `${bedLabel}, ${s.label}${t}, not sent: move or discharge`;
   }
 }
 
@@ -98,4 +98,4 @@ export function groupByBay<T extends { id: string }>(beds: T[], bays: Bays | nul
 
 /** "8 occupied", "1 conflict": the counts row that replaces the filter buttons. */
 export const countLabel = (f: Exclude<Filter, 'All'>, n: number): string =>
-  f === 'Conflict' ? `${n} ${n === 1 ? 'conflict' : 'conflicts'}` : `${n} ${f.toLowerCase()}`;
+  f === 'Conflict' ? `${n} ${n === 1 ? 'conflict' : 'conflicts'}` : f === 'Pending' ? `${n} not sent` : `${n} ${f.toLowerCase()}`;

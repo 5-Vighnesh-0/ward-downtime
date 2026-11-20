@@ -92,7 +92,7 @@ test('E2E-04: ward server down; two tablets keep working; after restart both con
   await admit(b, 2, 'Mira Holt');
   for (const p of [a, b]) {
     await expect(p.getByText(/^Working offline\./)).toBeVisible();
-    await expect(p.getByRole('button', { name: /pending, not yet confirmed by ward server$/ })).toBeVisible();
+    await expect(p.getByRole('button', { name: /not sent, not yet confirmed by ward server$/ })).toBeVisible();
   }
   await startApi();
   for (const p of [a, b]) {

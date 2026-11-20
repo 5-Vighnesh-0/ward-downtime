@@ -70,7 +70,7 @@ test('a handoff note reaches the next tablet, is gone for the next patient, and 
   await b.getByRole('button', { name: /^Bed 1, Mira Holt, / }).click();
   await expect(b.getByText('No handoff notes for this bed.')).toBeVisible();
   await b.keyboard.press('Escape');
-  await expect(b.getByRole('button', { name: /^Bed 1, Mira Holt, (pending|confirmed)/ })).toBeVisible(); // no note count for the new patient
+  await expect(b.getByRole('button', { name: /^Bed 1, Mira Holt, (not sent|confirmed)/ })).toBeVisible(); // no note count for the new patient
 
   const c = await (await browser.newContext()).newPage();
   await setUpTablet(c, 'clerk', 'Tablet C');

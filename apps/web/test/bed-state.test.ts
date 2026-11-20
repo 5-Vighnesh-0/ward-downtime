@@ -39,16 +39,16 @@ describe('cardName', () => {
   it('says the status in words, never by colour alone', () => {
     expect(cardName('Bed 4', { kind: 'empty' })).toBe('Bed 4, empty');
     expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: false })).toBe('Bed 4, Rowan Ashby, confirmed');
-    expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: true })).toBe('Bed 4, Rowan Ashby, pending, not yet confirmed by ward server');
+    expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: true })).toBe('Bed 4, Rowan Ashby, not sent, not yet confirmed by ward server');
     expect(cardName('Bed 4', { kind: 'conflict', count: 2 })).toBe('Bed 4, conflict: 2 patients, charge nurse must choose');
-    expect(cardName('Bed 4', { kind: 'pendingOut', patientId: 'T-K3P-0001', label: 'Rowan Ashby' })).toBe('Bed 4, Rowan Ashby, pending move or discharge');
+    expect(cardName('Bed 4', { kind: 'pendingOut', patientId: 'T-K3P-0001', label: 'Rowan Ashby' })).toBe('Bed 4, Rowan Ashby, not sent: move or discharge');
   });
 
   it('adds open and overdue tasks right after the main words, as the card shows them', () => {
     const t = { open: 2, overdue: 1 };
     expect(cardName('Bed 4', { kind: 'empty' }, t)).toBe('Bed 4, empty, 2 tasks, 1 overdue');
     expect(cardName('Bed 4', { kind: 'occupied', patientId: 'T-K3P-0001', label: 'Rowan Ashby', pending: true }, { open: 1, overdue: 0 })).toBe(
-      'Bed 4, Rowan Ashby, 1 task, pending, not yet confirmed by ward server',
+      'Bed 4, Rowan Ashby, 1 task, not sent, not yet confirmed by ward server',
     );
     expect(cardName('Bed 4', { kind: 'conflict', count: 2 }, t)).toBe('Bed 4, conflict: 2 patients, 2 tasks, 1 overdue, charge nurse must choose');
     expect(cardName('Bed 4', { kind: 'empty' }, { open: 0, overdue: 0 })).toBe('Bed 4, empty');
@@ -124,6 +124,6 @@ describe('countLabel', () => {
     expect(countLabel('Empty', 3)).toBe('3 empty');
     expect(countLabel('Conflict', 1)).toBe('1 conflict');
     expect(countLabel('Conflict', 0)).toBe('0 conflicts');
-    expect(countLabel('Pending', 2)).toBe('2 pending');
+    expect(countLabel('Pending', 2)).toBe('2 not sent');
   });
 });
