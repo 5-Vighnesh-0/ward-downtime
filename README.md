@@ -12,7 +12,7 @@ A tablet that has lost the network keeps working. The admit to bed 6 is saved on
 
 | Bed sheet: tasks and handoff notes | Charge nurse keeps one patient | Changes not yet confirmed |
 |---|---|---|
-| ![Bed sheet with an overdue task, a second task and a handoff note](docs/screenshots/bed-sheet.png) | ![Dialog confirming which patient stays in bed 4; the other moves to Unplaced](docs/screenshots/resolve-conflict.png) | ![My changes screen listing a pending admit, with the option to save unsynced changes to an encrypted file](docs/screenshots/my-changes.png) |
+| ![Bed side panel on the Tasks tab with an overdue task, a second task, and a Notes tab](docs/screenshots/bed-sheet.png) | ![Dialog confirming which patient stays in bed 4; the other moves to Unplaced](docs/screenshots/resolve-conflict.png) | ![My changes screen listing a pending admit, with the option to save unsynced changes to an encrypted file](docs/screenshots/my-changes.png) |
 
 All names are made up (see [DATA_POLICY.md](DATA_POLICY.md)). Captured with Playwright from the real app at iPad landscape size; regenerate with `WDB_SCREENSHOTS=1 pnpm e2e --project=chromium e2e/screenshots.spec.ts`.
 
