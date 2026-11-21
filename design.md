@@ -464,6 +464,18 @@ CREATE TABLE exports (
   encrypted   boolean NOT NULL,
   sha256      bytea NOT NULL                   -- of the produced file; content not stored
 );
+
+-- Hospital branding (FR-16, SEC-32): one row, display only, never in the event log
+CREATE TABLE ward_settings (
+  id             smallint    PRIMARY KEY CHECK (id = 1),
+  hospital_name  text,
+  accent         text,                            -- hex, at least 4.5:1 on white
+  logo           bytea CHECK (octet_length(logo) <= 204800),
+  logo_type      text  CHECK (logo_type IN ('image/png','image/jpeg')),
+  bays           jsonb,                           -- display-only groups of bed IDs
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  updated_by     text REFERENCES staff(staff_id)
+);
 ```
 
 **Append-only enforcement.** Migrations run as role `wdb_owner`. The app connects as `wdb_app`, with `GRANT SELECT, INSERT ON events, audit_log`, no `UPDATE/DELETE/TRUNCATE`, and `UPDATE` only on `log_head`, `devices`, `staff`, `sessions`. A `BEFORE UPDATE OR DELETE` trigger on `events` and `audit_log` raises an exception as a backstop.
@@ -516,6 +528,9 @@ Base path `/api/v1`. JSON only. Every error uses one shape: `{"error":{"code":"�
 | `GET /admin/devices`, `POST /admin/devices/{id}/approve`, `POST /admin/devices/{id}/revoke` | admin | Device lifecycle |
 | `GET /admin/staff`, `POST /admin/staff`, `PATCH /admin/staff/{id}` | admin | Staff management |
 | `GET /audit?before={id}&limit={n≤500}&staffId&deviceId&action` (newest first; `next` is the `before` for the next page), `POST /audit/export` `{passphrase}` (a POST so the passphrase never sits in a URL) | charge/admin | FR-14 |
+| `GET /branding` | none | Hospital name, accent, logo as a `data:` URL, bays (FR-16). No session needed |
+| `PUT /admin/branding` | admin | Set name, accent and bays (JSON). Audited as `BRANDING_CHANGED` |
+| `PUT /admin/branding/logo` | admin | Replace the logo. Raw PNG or JPEG body, at most 200 KB; type read from the bytes (SEC-32). Audited as `BRANDING_CHANGED` |
 | `GET /admin/health` | admin | Head seq and hash, devices (last seen, clock offset, last deviceSeq), last-24 h counts from the audit log, push p50/p95, live SSE clients, alerts |
 
 ### 5.3 Push: request, response, idempotency
@@ -1048,14 +1063,20 @@ ASVS: OWASP ASVS **5.0.0** (released 30 May 2025, [OWASP ASVS](https://owasp.org
 | Enroll | first run | Show fingerprint, wait for approval |
 | Sign in | all | Staff picker + PIN keypad |
 | Lock | all | Idle lock (PIN to unlock) |
-| Board | all | Bed grid with status and sync badges |
-| Bed sheet | all | Actions for one bed (admit / discharge / transfer / rename) |
+| Board | all | Ward map: beds grouped by bay, with a counts row and sync badges |
+| Bed panel | all | Actions, Tasks and Notes for one bed (admit / discharge / transfer / rename) |
 | Conflicts | charge, admin | Queue of open conflicts; resolve dialog |
 | Unplaced | clerk, nurse, charge, admin | Patients rejected by a resolution, waiting for a bed |
 | My changes | all | This device's events with state; save unsynced to file |
 | Recovery | charge, admin | Create export; import device file (admin); replay (admin) |
 | Audit | charge, admin | Filterable audit table; export |
-| Admin | admin | Devices, staff, ward beds, health |
+| Admin | admin | Devices, staff, Hospital (name, logo, accent, bays), ward beds, health |
+
+**Shell.** After sign-in every screen has a top bar (hospital logo and name, ward name, a status pill, the staff menu) and a side rail.
+- Side rail: Board, Unplaced, My changes, and Conflicts for charge and admin. More opens Recovery, Audit and Admin, by role.
+- Status pill: "Online · all sent" or "Offline · N not sent". Text and icon, never colour alone.
+- Staff menu: Lock and Sign out.
+- One notice line shows the most urgent notice, with "+N more" for the rest. Rank, most urgent first: idle sign-out warning, log fork or storage lost, server alert, server behind, offline, unsynced changes, clock skew, storage not persistent, update ready.
 
 ### 10.2 Component tree
 
@@ -1102,13 +1123,17 @@ There is no drag-and-drop anywhere (WCAG 2.5.7).
 
 ### 10.4 States per bed card
 
+The ward map groups tiles by bay, a display-only grouping set in Admin → Hospital (FR-16); beds in no bay sit under "Other beds", and with no bays there is one "All beds" group. A counts row above it reads like "8 occupied", "3 empty", "1 conflict", "1 not sent". Each tile has a large bed number (`text-xl`) and at most one meta line. A dashed outline means empty or not sent, a red outline with a tint means conflict, and a ring means the bed is open in the side panel.
+
 | State | Visual (never colour alone) | Accessible name |
 |---|---|---|
-| Empty | Light surface, "Empty" text | "Bed 4, empty" |
-| Occupied, confirmed | Solid border, label in large type | "Bed 4, Rowan Ashby, confirmed" |
-| Occupied, pending | Dashed border + clock icon + "Pending" | "Bed 4, Rowan Ashby, pending, not yet confirmed by ward server" |
-| Conflict | 4 px border, warning triangle, "Conflict: 2 patients" | "Bed 4, conflict: 2 patients, charge nurse must choose" |
-| Pending discharge/transfer out | Strike-through label + "Pending" | "Bed 4, Rowan Ashby, pending discharge" |
+| Empty | Dashed outline, "Empty" text | "Bed 4, empty" |
+| Occupied, confirmed | Solid border, large bed number | "Bed 4, Rowan Ashby, confirmed" |
+| Occupied, not sent | Dashed border + clock icon + "Not sent" | "Bed 4, Rowan Ashby, not sent, not yet confirmed by ward server" |
+| Conflict | Red outline and tint, warning triangle, "Conflict: 2 patients" | "Bed 4, conflict: 2 patients, charge nurse must choose" |
+| Discharge/transfer out not sent | Strike-through label + "Not sent" | "Bed 4, Rowan Ashby, not sent: move or discharge" |
+
+**Bed panel.** Tapping a tile opens a side panel; below 900 px it is a bottom sheet. Tabs: Tasks and "Notes · N". The add forms ("Add a task", "Add a note") stay closed until tapped.
 
 ### 10.5 Accessibility (WCAG 2.2 AA) and glove-friendly touch
 
@@ -1155,10 +1180,10 @@ Copy rules: verbs on buttons, name the patient and bed in confirmations, no "Are
 | Heading | Decision |
 |---|---|
 | Visual theme & atmosphere | Calm, clinical, high-contrast working tool. Dense but scannable grid. No decorative imagery, no gradients, no brand mimicry |
-| Color palette & roles | Semantic tokens only: `--surface`, `--surface-raised`, `--text`, `--text-muted`, `--border`, `--focus`, `--status-occupied`, `--status-pending`, `--status-conflict`, `--status-error`. Values in `apps/web/src/styles/tokens.css`, contrast-checked on white and on the raised surface: text 17.9:1, muted 7.6:1, border 4.8:1, occupied `#0E7490` 5.4:1, pending `#92400E` 7.1:1, conflict/error `#B91C1C` 6.5:1. The starting primary `#0891B2` was only 3.7:1, so it was darkened. Each status also has an icon and text |
+| Color palette & roles | "Clinical calm" tokens in `apps/web/src/styles/tokens.css`: `--color-page` `#f6f5f1`, `--color-surface` `#ffffff`, `--color-surface-raised` `#efede7`, `--color-text` `#1c2430` (14.3:1 on page), `--color-text-muted` `#4f5764` (6.7:1), `--color-border` `#858a93` (3.2:1, WCAG 1.4.11), `--color-status-pending` `#8a3b0c` (7.7:1 on white) with `--color-status-pending-bg`, `--color-status-conflict` `#b42318` (6.6:1) with `--color-status-conflict-bg`, `--color-status-error`, `--color-focus`, `--color-status-occupied`. Each status also has an icon and text. **Accent rule:** `--color-accent` is the hospital's colour, set at run time with `style.setProperty` (the CSP is unchanged). The tablet applies a saved accent only if it is at least 4.5:1 on white, and the server refuses one that is not. The admin picks the colour from the logo and it is darkened until it passes. Conflict red, pending amber and the empty outline are never brandable |
 | Typography rules | System font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`), no web-font fetch (SEC-3, offline). Body 18 px, bed label 22 px semibold, line-height 1.4, tabular numerals for bed numbers and times |
 | Component stylings | Native elements + Tailwind classes; one button style per role (primary, secondary, destructive); 8 px radius; 2 px borders |
-| Layout principles | Bed grid: 2 columns at < 600 px, 4 at ≥ 768 px, 6 at ≥ 1200 px; 4 px spacing scale; top bar 56 px |
+| Layout principles | Bed tiles fill each bay row (auto-fill, 10 rem minimum width); 4 px spacing scale; top bar at least 56 px |
 | Depth & elevation | Flat; sheets use a scrim plus one shadow level |
 | Do's and don'ts | Do: icon + text for every status. Don't: colour-only status, hover tooltips for essential info, toasts that vanish before they can be read (live region + persistent My changes instead) |
 | Responsive behavior | Portrait and landscape tablets, 1080p ward PC; safe-area insets on iPad |
