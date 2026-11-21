@@ -1094,7 +1094,7 @@ ASVS: OWASP ASVS **5.0.0** (released 30 May 2025, [OWASP ASVS](https://owasp.org
       <SignInScreen>  <StaffPicker/> <PinPad/>
       <LockScreen>    <PinPad/>
       <BoardScreen>
-        <BoardFilters/>                 // All | Empty | Occupied | Conflict | Pending
+        <BoardFilters/>                 // counts row: N empty | N occupied | N conflict(s) | N not sent (tap to filter, tap again to clear)
         <BedGrid>  <BedCard/>×N         // status + occupant + SyncBadge
         <BedPanel>  (non-modal <dialog>, show())
           <AdmitForm/> <TransferPicker/> <RenameForm/> <DischargeConfirm/> <BedHistory/>
@@ -1114,7 +1114,7 @@ State ownership: `syncEngine` (plain TS, no React) owns Dexie, the outbox, SSE a
 
 ### 10.3 Key interaction flows
 
-- **Admit:** tap empty bed → sheet → label field (autofocus, visible label "Patient name label") → temp ID shown read-only ("ID: T-K3P-0008") → **Admit to bed 4**. The card shows Pending.
+- **Admit:** tap empty bed → sheet → label field (autofocus, visible label "Patient name label") → temp ID shown read-only ("ID: T-K3P-0008") → **Admit to bed 4**. The card shows Not sent until the ward server confirms it.
 - **Transfer:** occupied bed → **Move bed** → grid of empty beds only (occupied and conflicted beds are disabled with text) → tap → **Move Rowan Ashby to bed 9**.
 - **Discharge:** occupied bed → **Discharge** → confirm dialog *"Discharge Rowan Ashby from bed 4?"* with **Discharge** / **Keep in bed**.
 - **Resolve:** Conflicts → card shows bed, each candidate's label, temp ID, device label, staff ID and device time → choose **Keep this patient** on one, or **Keep neither** → confirm *"Keep Imani Calloway in bed 4? Rowan Ashby will move to Unplaced."*

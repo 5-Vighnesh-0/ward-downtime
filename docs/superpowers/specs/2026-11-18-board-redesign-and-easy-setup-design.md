@@ -55,7 +55,7 @@ Each part ships on its own with tests passing. Part 3 reuses parts 1 and 2.
 - **Colour from the logo**: on upload the admin's browser draws the logo on a canvas and picks the most common strong colour (ignoring near-white, near-black and grey pixels). It then darkens it in small steps until it reaches 4.5:1 against white. The admin sees the result and can override it with a colour picker. The server checks the hex value and the 4.5:1 contrast again and refuses anything below it.
 - **Delivery as built**: the logo is served as a `data:` URL inside `GET /api/v1/branding`, not from a separate logo route, so the CSP stays unchanged.
 - **No internet**: nothing is looked up online. The admin uploads the file their hospital's communications team provides.
-- **Tablets**: fetch branding from `GET /api/v1/branding` (no session needed, so the sign-in screen can show it), keep a copy for offline use, and refresh on each sync. Default when nothing is set: no logo, the current teal, the ward name only.
+- **Tablets**: fetch branding from `GET /api/v1/branding` (no session needed, so the sign-in screen can show it), keep a copy for offline use, and refresh when the tablet comes online, every 60 s while online, and when the app comes back to the front. Default when nothing is set: no logo, the current teal, the ward name only.
 - Every change is written to the audit log (`BRANDING_CHANGED`, by staff ID).
 
 **Database change (needs your OK before building):** a new single-row table `ward_settings`:
