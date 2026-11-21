@@ -20,6 +20,16 @@ async function axe(page: Page, screen: string): Promise<string[]> {
     .map((v) => `${screen}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`);
 }
 
+test('the staff menu closes on Escape and the staff button keeps focus (NFR-A11y)', async ({ page }) => {
+  await setUpTablet(page);
+  const staff = page.getByRole('button', { name: /^S-\d{4}$/ });
+  await staff.click();
+  await expect(page.getByRole('button', { name: 'Lock', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Lock', exact: true })).toBeHidden();
+  await expect(staff).toBeFocused();
+});
+
 test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'the DOM is the same in every browser; one engine is enough for axe');
   const found: string[] = [];

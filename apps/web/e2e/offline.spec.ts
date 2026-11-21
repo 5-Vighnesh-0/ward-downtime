@@ -170,3 +170,14 @@ test('an admin sets the hospital name and the top bar shows it (FR-16)', async (
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
   await expect(page.getByRole('banner').getByText('Demo General Hospital')).toBeVisible();
 });
+
+// 2x2 solid-colour PNG.
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPgK5kARAwQCgAb/gRJPTJvIAAAAABJRU5ErkJggg==', 'base64');
+
+test('an admin uploads a logo and the top bar shows it (FR-16)', async ({ page }) => {
+  await setUpTablet(page);
+  await tab(page, 'Admin');
+  await page.getByLabel('Hospital logo').setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: TINY_PNG });
+  await expect(page.getByRole('status').filter({ hasText: 'Logo saved.' })).toBeVisible();
+  await expect(page.getByRole('banner').locator('img')).toBeVisible();
+});
