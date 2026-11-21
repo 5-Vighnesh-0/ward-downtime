@@ -310,7 +310,7 @@ function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: N
     try {
       const b = (await (await request(net, 'PUT', '/api/v1/admin/branding', { hospitalName: name.trim() || null, accent, bays: kept.length ? kept : null })).json()) as Branding;
       onSaved(b);
-      setMsg('Saved. Every tablet shows it after its next sync.');
+      setMsg('Saved. Other tablets show it within a minute while online.');
     } catch (e) {
       setMsg(errText(e));
     }

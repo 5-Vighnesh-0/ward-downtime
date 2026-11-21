@@ -57,11 +57,11 @@ function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: str
       )}
       {metaParts.length > 0 && ' '}
       {metaParts.length > 0 && (
-        <span className="flex flex-wrap gap-x-1">
+        <span>
           {metaParts.map((m, i) => (
-            <span key={i} className={m.cls}>
-              {i > 0 && <span aria-hidden="true">· </span>}
-              {m.node}
+            <span key={i}>
+              {i > 0 && <span aria-hidden="true"> · </span>}
+              <span className={m.cls}>{m.node}</span>
             </span>
           ))}
         </span>
@@ -70,7 +70,7 @@ function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: str
   );
 }
 
-export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve }: { engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
+export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve, onPanel }: { onPanel?: ((open: boolean) => void) | undefined; engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');
@@ -79,13 +79,18 @@ export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve }: { eng
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now), notes: notesFor(s.view, id).length }));
   const shown = beds.filter((b) => matches(filter, b.state));
+  // The page pads its content column while a bed is open, so notices and the last rows stay clear of the panel.
+  useEffect(() => {
+    onPanel?.(open !== null);
+    return () => onPanel?.(false);
+  }, [open]);
   const close = () => {
     const was = open;
     setOpen(null);
     if (was) requestAnimationFrame(() => document.getElementById(`bed-${was}`)?.focus()); // WCAG 2.4.3: back to the tile
   };
   return (
-    <main className={`flex flex-col gap-4 p-4 ${open ? 'min-[900px]:pr-[27rem]' : ''}`}>
+    <main className="flex flex-col gap-4 p-4">
       <h1 className="sr-only">Beds</h1>
       {beds.length === 0 && <p>{copy.noBeds + (isAdmin ? ' Use Admin → Ward beds.' : '')}</p>}
       {beds.length > 0 && (
@@ -308,22 +313,24 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           const overdue = task.dueAt !== null && Date.parse(task.dueAt) < now;
           const pending = p.confirmed.tasks?.[id]?.status !== 'open';
           return (
-            <li key={id} className="flex flex-wrap items-center justify-between gap-2">
-              <span>
+            <li key={id} className="flex flex-nowrap items-center gap-2">
+              <span className="min-w-0 flex-1">
                 <span className="font-semibold">{task.title}</span>
                 {task.assignee && ` · for ${task.assignee}`}
                 {task.dueAt && <span className={overdue ? 'font-semibold text-status-error' : ''}>{` · ${overdue ? 'overdue since' : 'due'} ${timeOf(task.dueAt)}`}</span>}
                 {pending && <span className="text-status-pending"> · Not sent</span>}
               </span>
-              <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
-                Done
-              </Button>
+              <span className="shrink-0">
+                <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
+                  Done
+                </Button>
+              </span>
             </li>
           );
         })}
       </ul>
       <div ref={addRef}>
-          {adding ? (
+        {adding ? (
           <form
             className="flex flex-col gap-3"
             onSubmit={async (e) => {

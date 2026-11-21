@@ -81,6 +81,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const [branding, setBranding] = useState<Branding>(NO_BRANDING);
   const [more, setMore] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [bedOpen, setBedOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const showBranding = (b: Branding) => (setBranding(b), applyAccent(b.accent));
   const watchesAlerts = session?.role === 'charge' || session?.role === 'admin';
@@ -99,8 +100,15 @@ function Ready({ engine }: { engine: SyncEngine }) {
   }, [watchesAlerts, s.online, locked]);
   // FR-16: the stored copy at once, then the ward server's whenever the tablet is online.
   useEffect(() => void loadBranding(db).then(showBranding), []);
+  // Also every minute while online and when the app comes back to the front, so a tablet that stays online sees admin changes.
   useEffect(() => {
-    if (s.online) void refreshBranding(db, net).then(showBranding);
+    if (!s.online) return;
+    const refresh = () => void refreshBranding(db, net).then(showBranding);
+    const visible = () => document.visibilityState === 'visible' && refresh();
+    refresh();
+    const t = setInterval(refresh, 60_000);
+    document.addEventListener('visibilitychange', visible);
+    return () => (clearInterval(t), document.removeEventListener('visibilitychange', visible));
   }, [s.online]);
   const lastUnsynced = useRef(s.unsynced);
 
@@ -231,7 +239,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
   const status = `${s.online ? 'Online' : 'Offline'} · ${s.unsynced === 0 ? 'all sent' : `${s.unsynced} not sent`}`;
   return (
     <>
-      <header className="sticky top-0 z-10 flex min-h-14 items-center gap-3 border-b border-border bg-surface px-4 py-1">
+      <header className="sticky top-0 z-30 flex min-h-14 items-center gap-3 border-b border-border bg-surface px-4 py-1">
         {branding.logo && <img src={branding.logo} alt="" className="h-9 w-auto" />}
         <span className="font-semibold">{branding.hospitalName ?? 'Ward board'}</span>
         {branding.ward && <span className="hidden text-text-muted sm:inline">{branding.ward}</span>}
@@ -240,6 +248,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
             {stale && <span aria-hidden="true">⚠ </span>}
             <span aria-hidden="true">{s.online ? '● ' : '○ '}</span>
             {status}
+            <span className="sr-only">, open My changes</span>
           </span>
         </Button>
         <div className="relative ml-auto" ref={menuRef} onKeyDown={(e) => e.key === 'Escape' && (setMenu(false), menuRef.current?.querySelector('button')?.focus())}>
@@ -264,15 +273,15 @@ function Ready({ engine }: { engine: SyncEngine }) {
           )}
           {showMore && extra.map(railButton)}
         </nav>
-        <div className="min-w-0 flex-1">
+        <div className={`min-w-0 flex-1 ${bedOpen ? 'pb-[60vh] min-[900px]:pr-[27rem] min-[900px]:pb-0' : ''}`}>
           <NoticeLine notices={sortNotices(notices)} />
-          {tab === 'board' && <BoardScreen engine={engine} bays={branding.bays} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
+          {tab === 'board' && <BoardScreen onPanel={setBedOpen} engine={engine} bays={branding.bays} isAdmin={session.role === 'admin'} canNote={ALLOWED_ROLES.HANDOFF_NOTE_ADDED.includes(session.role)} onResolve={canResolve ? () => setTab('conflicts') : undefined} />}
           {tab === 'conflicts' && <ConflictsScreen engine={engine} />}
           {tab === 'unplaced' && <UnplacedScreen engine={engine} />}
           {tab === 'changes' && <MyChangesScreen engine={engine} isAdmin={session.role === 'admin'} />}
           {tab === 'recovery' && <RecoveryScreen engine={engine} net={net} isAdmin={session.role === 'admin'} recovering={alerts.some((a) => a.code === 'RECOVERING')} />}
           {tab === 'audit' && <AuditScreen net={net} />}
-          {tab === 'admin' && <AdminScreen engine={engine} net={net} onBranding={showBranding} />}
+          {tab === 'admin' && <AdminScreen engine={engine} net={net} onBranding={() => void refreshBranding(db, net).then(showBranding)} />}
         </div>
       </div>
       <LiveRegion message={announce} />

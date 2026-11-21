@@ -157,7 +157,7 @@ export function Panel(p: { title: string; onClose: () => void; children: ReactNo
     const d = ref.current;
     if (d && !d.open) d.show();
     (d?.querySelector<HTMLElement>('[data-autofocus]') ?? d?.querySelector<HTMLElement>('h2'))?.focus();
-  }, [p.title]);
+  }, []); // BedSheet is keyed per bed, so this runs once; a rename from another tablet must not steal focus
   return (
     <dialog
       ref={ref}
