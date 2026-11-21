@@ -96,6 +96,7 @@ describe('branding routes', () => {
     };
     expect(await code('admin', svg)).toEqual([422, 'LOGO_REFUSED']);
     expect(await code('admin', svg, 'image/svg+xml')).toEqual([415, 'BAD_REQUEST']);
+    expect((await put('admin', '/api/v1/admin/branding/logo', [1, 2, 3])).statusCode).toBe(415);
     expect(await code('admin', png(2000, 10))).toEqual([422, 'LOGO_REFUSED']);
     expect(await code('admin', Buffer.concat([png(64, 64), Buffer.alloc(204_800)]))).toEqual([413, 'PAYLOAD_TOO_LARGE']);
     expect(await code('charge', png(64, 64))).toEqual([403, 'ROLE_FORBIDDEN']);

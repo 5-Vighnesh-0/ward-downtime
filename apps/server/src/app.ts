@@ -440,7 +440,8 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
     });
 
     api.put('/api/v1/admin/branding/logo', { onRequest: admin, bodyLimit: MAX_LOGO_BYTES }, async (req, reply) => {
-      const body = req.body as Buffer;
+      if (!Buffer.isBuffer(req.body)) return deny(reply, 415, 'BAD_REQUEST', 'Send the logo as image/png or image/jpeg');
+      const body = req.body;
       const problem = logoProblem(body);
       if (problem) return deny(reply, 422, 'LOGO_REFUSED', problem);
       const by = (req.auth as Auth).staffId;
