@@ -247,7 +247,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
           <span className={s.online && !stale ? '' : 'text-status-pending'}>
             {stale && <span aria-hidden="true">⚠ </span>}
             <span aria-hidden="true">{s.online ? '● ' : '○ '}</span>
-            {status}
+            <span>{status}</span>
             <span className="sr-only">, open My changes</span>
           </span>
         </Button>
