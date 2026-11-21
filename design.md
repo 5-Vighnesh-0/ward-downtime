@@ -211,7 +211,7 @@ sequenceDiagram
 | `navigator.storage.persist()` | Asks browser not to evict | None (it is the platform API) | Yes, but not guaranteed on Safari (§8.2) |
 | TanStack Query | Caching for online-only reads (admin lists, audit, health) | SWR: equivalent; TQ is mandated | **Flagged: unsuitable for the board/log.** It is a cache, not a durable queue. The board comes from Dexie through the sync engine. TQ is limited to online-only admin reads (§10.2). |
 | Zustand | Small store for UI state and the derived board view | Redux Toolkit: more ceremony for the same job | Approved but **not used** (M3b): the engine already publishes its state, and React's `useSyncExternalStore` reads it with no dependency |
-| Tailwind + Radix UI | Compiled CSS (CSP-safe), accessible primitives (dialog, focus trap) | MUI: runtime CSS-in-JS conflicts with strict CSP | Tailwind yes. Radix approved but **not used** (M3b): the native `<dialog>` with `showModal()` traps focus, closes on Esc and restores focus in every target browser |
+| Tailwind + Radix UI | Compiled CSS (CSP-safe), accessible primitives (dialog, focus trap) | MUI: runtime CSS-in-JS conflicts with strict CSP | Tailwind yes. Radix approved but **not used** (M3b): the native `<dialog>` closes on Esc in every target browser. The bed panel is non-modal (`show()`, no scrim) and returns focus to the bed tile on close; the other dialogs use `showModal()`, which traps focus and restores it |
 | WebCrypto Ed25519 | Small fast signatures; native in Chrome 137+, Firefox 129+, Safari 17+ ([caniuse](https://caniuse.com/mdn-api_subtlecrypto_importkey_ed25519)) | ECDSA P-256: wider legacy support, but signature malleability and more parameters to get wrong | Yes for "current browsers". Edge support is assumed from Chromium and is NOT VERIFIED. |
 | Node 22 + Fastify | Schema-first routes, low overhead, built-in body limit | Express: no native schema/body-limit model | Yes |
 | PostgreSQL 16 + Drizzle | Transactions, unique constraints for idempotency, row lock for ordering; typed SQL migrations | SQLite: fine for scale, but no role separation for the append-only grants; Prisma: heavier engine binary | Yes |
@@ -478,7 +478,7 @@ CREATE TABLE ward_settings (
 );
 ```
 
-**Append-only enforcement.** Migrations run as role `wdb_owner`. The app connects as `wdb_app`, with `GRANT SELECT, INSERT ON events, audit_log`, no `UPDATE/DELETE/TRUNCATE`, and `UPDATE` only on `log_head`, `devices`, `staff`, `sessions`. A `BEFORE UPDATE OR DELETE` trigger on `events` and `audit_log` raises an exception as a backstop.
+**Append-only enforcement.** Migrations run as role `wdb_owner`. The app connects as `wdb_app`, with `GRANT SELECT, INSERT ON events, audit_log`, no `UPDATE/DELETE/TRUNCATE`, and `UPDATE` only on `log_head`, `devices`, `staff`, `sessions`; on `ward_settings` it has `SELECT, INSERT, UPDATE` and no `DELETE`. A `BEFORE UPDATE OR DELETE` trigger on `events` and `audit_log` raises an exception as a backstop.
 
 ### 4.5 IndexedDB stores (Dexie, database `wdb`, version 1)
 
@@ -594,7 +594,7 @@ Other per-event statuses: `{"status":"duplicate","serverSeq":97}` and `{"status"
 
 | Device state | Meaning | Board badge |
 |---|---|---|
-| `queued` / `sending` | In outbox, not confirmed | **Pending** (dashed outline + clock icon) |
+| `queued` / `sending` | In outbox, not confirmed | **Not sent** (dashed outline + clock icon; My changes still calls it "Pending: not yet sent") |
 | confirmed + `applied` / `noop` | Has `serverSeq`; reducer applied it | **Confirmed** (solid, no badge; tick in My changes) |
 | confirmed + `held` | Part of an open conflict | **Conflict** (thick border + warning icon + "Conflict") |
 | confirmed + `rejected` | Lost a resolution | **Not kept** (in My changes and bed history) |
@@ -857,7 +857,7 @@ RFC 4180 quoting. Cells starting with `= + - @` are prefixed with `'` (CSV injec
 
 ### 8.3 Unsynced counter
 
-The app header always shows `Unsynced: N`, where N = outbox items in `queued`/`sending`/`refused`. It turns into a warning style (icon + text) when N > 0 **and** the last successful push was more than 10 min ago. Tapping it opens **My changes**.
+The app header always shows a status pill, "Online · all sent" or "Offline · N not sent", where N = outbox items in `queued`/`sending`/`refused`. It turns into a warning style (icon + text) when N > 0 **and** the last successful push was more than 10 min ago. Tapping it opens **My changes**.
 
 ### 8.4 Export-to-file fallback (FR-12)
 
@@ -1096,7 +1096,7 @@ ASVS: OWASP ASVS **5.0.0** (released 30 May 2025, [OWASP ASVS](https://owasp.org
       <BoardScreen>
         <BoardFilters/>                 // All | Empty | Occupied | Conflict | Pending
         <BedGrid>  <BedCard/>×N         // status + occupant + SyncBadge
-        <BedSheet>  (native <dialog>)
+        <BedPanel>  (non-modal <dialog>, show())
           <AdmitForm/> <TransferPicker/> <RenameForm/> <DischargeConfirm/> <BedHistory/>
       <ConflictsScreen>  <ConflictCard/>×N  <ResolveDialog/>
       <UnplacedScreen>   <UnplacedRow/>×N   <AdmitForm/>
@@ -1150,7 +1150,7 @@ The ward map groups tiles by bay, a display-only grouping set in Admin → Hospi
 
 ### 10.6 Empty, error and offline states, and UX copy
 
-Terms are used the same way everywhere: **Pending**, **Confirmed**, **Conflict**, **Not kept**, **Not applied**, **Failed**, **Unplaced**, **Ward server**.
+Terms are used the same way everywhere: **Pending** (the board says "Not sent"; My changes says "Pending: not yet sent"), **Confirmed**, **Conflict**, **Not kept**, **Not applied**, **Failed**, **Unplaced**, **Ward server**.
 
 | Context | Copy |
 |---|---|
@@ -1182,9 +1182,9 @@ Copy rules: verbs on buttons, name the patient and bed in confirmations, no "Are
 | Visual theme & atmosphere | Calm, clinical, high-contrast working tool. Dense but scannable grid. No decorative imagery, no gradients, no brand mimicry |
 | Color palette & roles | "Clinical calm" tokens in `apps/web/src/styles/tokens.css`: `--color-page` `#f6f5f1`, `--color-surface` `#ffffff`, `--color-surface-raised` `#efede7`, `--color-text` `#1c2430` (14.3:1 on page), `--color-text-muted` `#4f5764` (6.7:1), `--color-border` `#858a93` (3.2:1, WCAG 1.4.11), `--color-status-pending` `#8a3b0c` (7.7:1 on white) with `--color-status-pending-bg`, `--color-status-conflict` `#b42318` (6.6:1) with `--color-status-conflict-bg`, `--color-status-error`, `--color-focus`, `--color-status-occupied`. Each status also has an icon and text. **Accent rule:** `--color-accent` is the hospital's colour, set at run time with `style.setProperty` (the CSP is unchanged). The tablet applies a saved accent only if it is at least 4.5:1 on white, and the server refuses one that is not. The admin picks the colour from the logo and it is darkened until it passes. Conflict red, pending amber and the empty outline are never brandable |
 | Typography rules | System font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`), no web-font fetch (SEC-3, offline). Body 18 px, bed label 22 px semibold, line-height 1.4, tabular numerals for bed numbers and times |
-| Component stylings | Native elements + Tailwind classes; one button style per role (primary, secondary, destructive); 8 px radius; 2 px borders |
+| Component stylings | Native elements + Tailwind classes; one button style per role (primary, secondary, destructive); rounded-xl; 1 px borders on tiles, dashed or 2 px borders for status |
 | Layout principles | Bed tiles fill each bay row (auto-fill, 10 rem minimum width); 4 px spacing scale; top bar at least 56 px |
-| Depth & elevation | Flat; sheets use a scrim plus one shadow level |
+| Depth & elevation | Flat; the bed panel has no scrim, just one shadow level |
 | Do's and don'ts | Do: icon + text for every status. Don't: colour-only status, hover tooltips for essential info, toasts that vanish before they can be read (live region + persistent My changes instead) |
 | Responsive behavior | Portrait and landscape tablets, 1080p ward PC; safe-area insets on iPad |
 | Agent prompt guide | "Use tokens from `apps/web/src/styles/tokens.css`; min target 48 px; every status = icon + text; no network fonts." |

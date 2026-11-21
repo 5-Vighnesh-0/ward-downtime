@@ -53,6 +53,7 @@ Each part ships on its own with tests passing. Part 3 reuses parts 1 and 2.
 - **Admin → Hospital** (admin only): hospital name (max 60 characters), logo upload, accent colour, bays.
 - **Logo**: PNG or JPEG only, at most 200 KB and 1024×1024 px. The server checks the file's first bytes (magic number), not its name. No SVG (it can carry scripts). Served from the ward server with its own content type and `nosniff`, so the CSP (`img-src 'self'`) is unchanged.
 - **Colour from the logo**: on upload the admin's browser draws the logo on a canvas and picks the most common strong colour (ignoring near-white, near-black and grey pixels). It then darkens it in small steps until it reaches 4.5:1 against white. The admin sees the result and can override it with a colour picker. The server checks the hex value and the 4.5:1 contrast again and refuses anything below it.
+- **Delivery as built**: the logo is served as a `data:` URL inside `GET /api/v1/branding`, not from a separate logo route, so the CSP stays unchanged.
 - **No internet**: nothing is looked up online. The admin uploads the file their hospital's communications team provides.
 - **Tablets**: fetch branding from `GET /api/v1/branding` (no session needed, so the sign-in screen can show it), keep a copy for offline use, and refresh on each sync. Default when nothing is set: no logo, the current teal, the ward name only.
 - Every change is written to the audit log (`BRANDING_CHANGED`, by staff ID).
@@ -155,5 +156,6 @@ If IT already pushes the certificate by MDM (RB-TLS), the nurse opens the HTTPS 
 
 ## Open items
 
+- Before Part 3 exposes the server publicly: rate limit and cache (ETag) `GET /api/v1/branding`.
 - Hosting provider for the demo (your choice; needed before part 3).
 - Approval of the `ward_settings` table and the prd.md edits (before part 1 starts).
