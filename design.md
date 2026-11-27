@@ -528,7 +528,7 @@ Base path `/api/v1`. JSON only. Every error uses one shape: `{"error":{"code":"â
 | `GET /admin/devices`, `POST /admin/devices/{id}/approve`, `POST /admin/devices/{id}/revoke` | admin | Device lifecycle |
 | `GET /admin/staff`, `POST /admin/staff`, `PATCH /admin/staff/{id}` | admin | Staff management |
 | `GET /audit?before={id}&limit={nâ‰¤500}&staffId&deviceId&action` (newest first; `next` is the `before` for the next page), `POST /audit/export` `{passphrase}` (a POST so the passphrase never sits in a URL) | charge/admin | FR-14 |
-| `GET /branding` | none | Hospital name, accent, logo as a `data:` URL, bays (FR-16). No session needed |
+| `GET /branding` | none | Hospital name, accent, logo as a `data:` URL, bays (FR-16). No session needed; 60 a minute per client |
 | `PUT /admin/branding` | admin | Set name, accent and bays (JSON). Audited as `BRANDING_CHANGED` |
 | `PUT /admin/branding/logo` | admin | Replace the logo. Raw PNG or JPEG body, at most 200 KB; type read from the bytes (SEC-32). Audited as `BRANDING_CHANGED` |
 | `GET /admin/health` | admin | Head seq and hash, devices (last seen, clock offset, last deviceSeq), last-24 h counts from the audit log, push p50/p95, live SSE clients, alerts |

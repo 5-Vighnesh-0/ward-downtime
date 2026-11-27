@@ -156,6 +156,6 @@ If IT already pushes the certificate by MDM (RB-TLS), the nurse opens the HTTPS 
 
 ## Open items
 
-- Before Part 3 exposes the server publicly: rate limit and cache (ETag) `GET /api/v1/branding`.
+- Before Part 3 exposes the server publicly: cache (ETag) `GET /api/v1/branding`. Its rate limit (60 a minute per client) is in.
 - Hosting provider for the demo (your choice; needed before part 3).
 - Approval of the `ward_settings` table and the prd.md edits (before part 1 starts).
