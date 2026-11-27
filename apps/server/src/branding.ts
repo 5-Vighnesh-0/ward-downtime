@@ -1,7 +1,7 @@
 // Hospital branding (spec 2026-11-18 §1.4; FR-16, SEC-32): logo checks and the one ward_settings row.
 import { eq } from 'drizzle-orm';
 import type { Bays, Branding } from '@wdb/shared';
-import { wardSettings } from './db/schema.ts';
+import { auditLog, wardSettings } from './db/schema.ts';
 import type { Db } from './db.ts';
 
 export const MAX_LOGO_BYTES = 204_800;
@@ -16,8 +16,13 @@ export function inspectImage(b: Buffer): { type: 'image/png' | 'image/jpeg'; wid
     return { type: 'image/png', width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
   if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
   let i = 2;
-  while (i + 9 <= b.length) {
+  while (i + 1 < b.length) {
     if (b[i] !== 0xff) return null;
+    if (b[i + 1] === 0xff) {
+      i++; // fill bytes may precede a marker (ITU-T T.81 B.1.1.2)
+      continue;
+    }
+    if (i + 9 > b.length) return null;
     const marker = b[i + 1] ?? 0;
     if (isSof(marker)) return { type: 'image/jpeg', height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };
     i += 2 + b.readUInt16BE(i + 2);
@@ -45,11 +50,19 @@ export async function readBranding(db: Db, ward: string | null): Promise<Brandin
   };
 }
 
-/** Creates or updates the single row; only the given columns change. */
-export async function saveBranding(db: Db, staffId: string, set: Partial<typeof wardSettings.$inferInsert>): Promise<void> {
+/** Creates or updates the single row (only the given columns change) and its BRANDING_CHANGED audit row, together or not at all. */
+export async function saveBranding(
+  db: Db,
+  staffId: string,
+  set: Partial<typeof wardSettings.$inferInsert>,
+  audit: { deviceId: string | null; code: 'settings' | 'logo'; requestId: string },
+): Promise<void> {
   const row = { ...set, updatedAt: new Date(), updatedBy: staffId };
-  await db
-    .insert(wardSettings)
-    .values({ id: 1, ...row })
-    .onConflictDoUpdate({ target: wardSettings.id, set: row });
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(wardSettings)
+      .values({ id: 1, ...row })
+      .onConflictDoUpdate({ target: wardSettings.id, set: row });
+    await tx.insert(auditLog).values({ ...audit, staffId, action: 'BRANDING_CHANGED', outcome: 'ok' });
+  });
 }

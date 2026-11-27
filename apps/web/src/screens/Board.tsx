@@ -84,10 +84,12 @@ export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve, onPanel
     onPanel?.(open !== null);
     return () => onPanel?.(false);
   }, [open]);
-  const close = () => {
-    const was = open;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const close = (id: string) => {
+    if (openRef.current !== id) return; // an action on an earlier bed finished after another bed was opened: leave that one open
     setOpen(null);
-    if (was) requestAnimationFrame(() => document.getElementById(`bed-${was}`)?.focus()); // WCAG 2.4.3: back to the tile
+    requestAnimationFrame(() => document.getElementById(`bed-${id}`)?.focus()); // WCAG 2.4.3: back to the tile
   };
   return (
     <main className="flex flex-col gap-4 p-4">
@@ -115,7 +117,7 @@ export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve, onPanel
           </ul>
         </section>
       ))}
-      {open && <BedSheet key={open} engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={close} onResolve={onResolve} />}
+      {open && <BedSheet key={open} engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={() => close(open)} onResolve={onResolve} />}
     </main>
   );
 }
@@ -329,6 +331,11 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           );
         })}
       </ul>
+      {error && !adding && (
+        <p role="alert" className="font-semibold text-status-error">
+          {error}
+        </p>
+      )}
       <div ref={addRef}>
         {adding ? (
           <form

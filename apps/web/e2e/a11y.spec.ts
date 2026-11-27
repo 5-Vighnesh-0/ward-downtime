@@ -51,7 +51,9 @@ test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ b
   found.push(...(await axe(a, 'board with a conflict')));
   await a.getByRole('button', { name: 'Bed 1, empty' }).click();
   found.push(...(await axe(a, 'bed sheet')));
+  await conflict.focus(); // Esc still closes the non-modal panel when focus is back on the map
   await a.keyboard.press('Escape');
+  await expect(a.getByRole('dialog')).toHaveCount(0);
   await tab(a, 'Conflicts');
   found.push(...(await axe(a, 'conflicts')));
   await a.getByRole('button', { name: 'Keep Imani Calloway' }).click();

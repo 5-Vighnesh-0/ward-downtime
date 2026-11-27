@@ -302,6 +302,7 @@ function HospitalSettings({ engine, net, onSaved }: { engine: SyncEngine; net: N
     setLogo(data.logo ?? null);
   }, [data]);
   if (error) return <p>{error}</p>;
+  if (!data) return <p>Loading…</p>; // edits made before the saved settings arrive would be overwritten
   const tooLight = contrastOnWhite(accent) < MIN_CONTRAST;
   const beds = Object.entries(s.confirmed.beds).sort(([a], [b]) => a.localeCompare(b));
   const setBay = (i: number, bay: Bays[number]) => setBays(bays.map((b, j) => (j === i ? bay : b)));

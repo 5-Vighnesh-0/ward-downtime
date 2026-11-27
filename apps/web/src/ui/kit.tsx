@@ -158,11 +158,18 @@ export function Panel(p: { title: string; onClose: () => void; children: ReactNo
     if (d && !d.open) d.show();
     (d?.querySelector<HTMLElement>('[data-autofocus]') ?? d?.querySelector<HTMLElement>('h2'))?.focus();
   }, []); // BedSheet is keyed per bed, so this runs once; a rename from another tablet must not steal focus
+  // Non-modal, so Esc must work wherever focus is (the map, the filters), not only inside the panel. A modal or the staff menu takes it first.
+  const onClose = useRef(p.onClose);
+  onClose.current = p.onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('dialog:modal') && onClose.current();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <dialog
       ref={ref}
       aria-labelledby={titleId}
-      onKeyDown={(e) => e.key === 'Escape' && p.onClose()}
       className="fixed inset-x-0 top-auto bottom-0 z-20 m-0 max-h-[85vh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface p-0 text-text shadow-xl min-[900px]:top-14 min-[900px]:right-0 min-[900px]:left-auto min-[900px]:h-[calc(100vh-3.5rem)] min-[900px]:max-h-none min-[900px]:w-[26rem] min-[900px]:rounded-none"
     >
       <div className="flex flex-col gap-4 p-5">

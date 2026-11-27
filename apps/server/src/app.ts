@@ -428,14 +428,13 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
 
     // --- Hospital branding (spec 2026-11-18 §1.4, FR-16). Read without a session: the sign-in screen shows it. ---
     const ward = opts.ward ?? null;
-    api.get('/api/v1/branding', async () => readBranding(db, ward));
+    api.get('/api/v1/branding', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async () => readBranding(db, ward)); // tablets poll once a minute
 
     api.put('/api/v1/admin/branding', { onRequest: admin }, async (req, reply) => {
       const b = BrandingUpdate.safeParse(req.body);
       if (!b.success) return reply.code(422).send(error('VALIDATION_FAILED', 'Invalid branding', z.flattenError(b.error)));
       const by = (req.auth as Auth).staffId;
-      await saveBranding(db, by, b.data);
-      await audit(req, { staffId: by, deviceId: req.auth?.deviceId ?? null, action: 'BRANDING_CHANGED', outcome: 'ok', code: 'settings' });
+      await saveBranding(db, by, b.data, { deviceId: req.auth?.deviceId ?? null, code: 'settings', requestId: req.id });
       return readBranding(db, ward);
     });
 
@@ -445,8 +444,7 @@ export function buildApp(db: Db, opts: AppOptions): FastifyInstance {
       const problem = logoProblem(body);
       if (problem) return deny(reply, 422, 'LOGO_REFUSED', problem);
       const by = (req.auth as Auth).staffId;
-      await saveBranding(db, by, { logo: body, logoType: inspectImage(body)?.type ?? null });
-      await audit(req, { staffId: by, deviceId: req.auth?.deviceId ?? null, action: 'BRANDING_CHANGED', outcome: 'ok', code: 'logo' });
+      await saveBranding(db, by, { logo: body, logoType: inspectImage(body)?.type ?? null }, { deviceId: req.auth?.deviceId ?? null, code: 'logo', requestId: req.id });
       return readBranding(db, ward);
     });
 

@@ -251,7 +251,7 @@ function Ready({ engine }: { engine: SyncEngine }) {
             <span className="sr-only">, open My changes</span>
           </span>
         </Button>
-        <div className="relative ml-auto" ref={menuRef} onKeyDown={(e) => e.key === 'Escape' && (setMenu(false), menuRef.current?.querySelector('button')?.focus())}>
+        <div className="relative ml-auto" ref={menuRef} onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), setMenu(false), menuRef.current?.querySelector('button')?.focus())}>
           <Button expanded={menu} onClick={() => setMenu(!menu)}>
             <span className="font-mono">{session.staffId}</span>
           </Button>

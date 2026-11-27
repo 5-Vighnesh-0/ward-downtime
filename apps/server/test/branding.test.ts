@@ -54,6 +54,12 @@ describe('inspectImage', () => {
     expect(inspectImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBeNull();
     expect(inspectImage(Buffer.alloc(0))).toBeNull();
   });
+
+  it('skips JPEG fill bytes before a marker and refuses a cut-off file without throwing', () => {
+    const filled = Buffer.concat([jpeg.subarray(0, 8), Buffer.from([0xff, 0xff]), jpeg.subarray(8)]);
+    expect(inspectImage(filled)).toEqual({ type: 'image/jpeg', width: 128, height: 64 });
+    expect(inspectImage(Buffer.concat([jpeg.subarray(0, 8), Buffer.alloc(6, 0xff)]))).toBeNull();
+  });
 });
 
 describe('branding routes', () => {
@@ -101,5 +107,14 @@ describe('branding routes', () => {
     expect(await code('admin', Buffer.concat([png(64, 64), Buffer.alloc(204_800)]))).toEqual([413, 'PAYLOAD_TOO_LARGE']);
     expect(await code('charge', png(64, 64))).toEqual([403, 'ROLE_FORBIDDEN']);
     expect((await owner.query('SELECT count(*)::int AS n FROM ward_settings')).rows[0].n).toBe(0);
+  });
+
+  // Last: the limit's counter lives in the shared app for the rest of this file.
+  it('limits the sign-in-free read to 60 a minute per client', async () => {
+    const get = () => app.inject({ method: 'GET', url: '/api/v1/branding' });
+    for (let i = 0; i < 55; i++) await get(); // earlier tests in this file used a few
+    let r = await get();
+    while (r.statusCode === 200) r = await get();
+    expect([r.statusCode, r.json().error.code]).toEqual([429, 'RATE_LIMITED']);
   });
 });
