@@ -66,7 +66,7 @@ test('E2E-05: two tablets discharge the same patient offline; the second is harm
     await p.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' }).click();
     await p.getByRole('button', { name: 'Discharge' }).click();
     await p.getByRole('dialog').getByRole('button', { name: 'Discharge' }).click();
-    await expect(p.getByRole('button', { name: /^Bed 1, Rowan Ashby, pending move or discharge$/ })).toBeVisible();
+    await expect(p.getByRole('button', { name: /^Bed 1, Rowan Ashby, not sent: move or discharge$/ })).toBeVisible();
   }
   await reconnect(a);
   await reconnect(b);

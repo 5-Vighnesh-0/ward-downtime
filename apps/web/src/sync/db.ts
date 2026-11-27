@@ -1,6 +1,6 @@
 // Device-local stores (design.md §4.5). The board is always derived from `events` + `outbox`, never stored as truth.
 import { Dexie, type EntityTable } from 'dexie';
-import type { AnyEvent, Board, Role } from '@wdb/shared';
+import type { AnyEvent, Board, Branding, Role } from '@wdb/shared';
 
 /** One confirmed log entry, exactly as the server sent it (hashes as lowercase hex). */
 export interface LedgerEntry {
@@ -43,6 +43,7 @@ export interface Meta {
   persistGranted: boolean;
   lastPushAt: number; // device clock, display only
   fingerprint?: string; // shown on the enroll screen until the admin approves
+  branding?: Branding; // last copy from the ward server (FR-16); not indexed, so no Dexie version change
 }
 
 export interface Session {

@@ -81,6 +81,7 @@ Use STRIDE per component (client, sync API, server, database, export, deploy) an
 - SEC-29: CI runs: lint, type-check, tests, secret scan (gitleaks), SAST (Semgrep), dependency audit, container scan (Trivy), SBOM (CycloneDX).
 - SEC-30: Threat model and this document updated with each architecture change.
 - SEC-31: Security tests: auth bypass, role escalation, replayed event, forged signature, oversized payload, tampered log.
+- SEC-32: Logo uploads are admin only, at most 200 KB and 1024 × 1024 px, and accepted only when the file's own bytes are a PNG or JPEG (never SVG). The logo is served as a `data:` URL, so the CSP is unchanged. Every branding change is audited (`BRANDING_CHANGED`).
 
 ## 5. Residual risks (state them honestly)
 

@@ -1,7 +1,7 @@
 // A11Y-01 axe on every screen, A11Y-02 keyboard-only E2E-01, and the board filters (design.md §10.2, §10.5, §12.8).
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { admit, reconnect, resetDb, setUpTablet, startApi, stopApi, tab, twoTablets } from './support.ts';
+import { admit, reconnect, resetDb, setUpTablet, staffMenu, startApi, stopApi, tab, twoTablets } from './support.ts';
 
 test.beforeEach(async () => {
   await stopApi();
@@ -19,6 +19,16 @@ async function axe(page: Page, screen: string): Promise<string[]> {
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
     .map((v) => `${screen}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`);
 }
+
+test('the staff menu closes on Escape and the staff button keeps focus (NFR-A11y)', async ({ page }) => {
+  await setUpTablet(page);
+  const staff = page.getByRole('button', { name: /^S-\d{4}$/ });
+  await staff.click();
+  await expect(page.getByRole('button', { name: 'Lock', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Lock', exact: true })).toBeHidden();
+  await expect(staff).toBeFocused();
+});
 
 test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'the DOM is the same in every browser; one engine is enough for axe');
@@ -41,7 +51,9 @@ test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ b
   found.push(...(await axe(a, 'board with a conflict')));
   await a.getByRole('button', { name: 'Bed 1, empty' }).click();
   found.push(...(await axe(a, 'bed sheet')));
+  await conflict.focus(); // Esc still closes the non-modal panel when focus is back on the map
   await a.keyboard.press('Escape');
+  await expect(a.getByRole('dialog')).toHaveCount(0);
   await tab(a, 'Conflicts');
   found.push(...(await axe(a, 'conflicts')));
   await a.getByRole('button', { name: 'Keep Imani Calloway' }).click();
@@ -56,9 +68,9 @@ test('A11Y-01: axe finds no serious or critical issue on any screen', async ({ b
   await tab(b, 'Unplaced');
   await expect(b.getByRole('button', { name: 'Admit Rowan Ashby to a bed' })).toBeVisible({ timeout: 20_000 });
   found.push(...(await axe(b, 'unplaced with a patient')));
-  await a.getByRole('button', { name: 'Lock' }).click();
+  await staffMenu(a, 'Lock');
   found.push(...(await axe(a, 'lock')));
-  await b.getByRole('button', { name: 'Sign out' }).click();
+  await staffMenu(b, 'Sign out');
   await expect(b.getByLabel('Staff ID')).toBeVisible();
   found.push(...(await axe(b, 'sign-in')));
   expect(found).toEqual([]);
@@ -119,7 +131,8 @@ test('A11Y-02: E2E-01 by keyboard only: two offline admits become a conflict and
   await expect(dialog.getByRole('button', { name: 'Keep Imani Calloway' })).toBeFocused();
   await a.keyboard.press('Enter');
   await expect(a.getByText(/^No conflicts\./)).toBeVisible();
-  await tabTo(a, 'Board');
+  await a.locator('body').focus(); // the side rail now comes before the screen, so start again from the top
+  await tabTo(a, /Board$/); // the rail button's text starts with its icon
   await a.keyboard.press('Enter');
   for (const p of [a, b]) await expect(p.getByRole('button', { name: 'Bed 4, Imani Calloway, confirmed' })).toBeVisible({ timeout: 20_000 });
   await a.context().close();
@@ -128,22 +141,22 @@ test('A11Y-02: E2E-01 by keyboard only: two offline admits become a conflict and
 
 test('board filters show only the matching beds, with counts', async ({ page }) => {
   await setUpTablet(page);
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await tab(page, 'Admin');
   await page.getByLabel('Number of beds (1 to 60)').fill('3');
   await page.getByRole('button', { name: 'Save ward settings' }).click();
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await admit(page, 1, 'Rowan Ashby');
   const filters = page.getByRole('group', { name: 'Show beds' });
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible();
-  await filters.getByRole('button', { name: 'Empty (2)' }).click();
-  await expect(filters.getByRole('button', { name: 'Empty (2)' })).toHaveAttribute('aria-pressed', 'true');
+  await filters.getByRole('button', { name: '2 empty' }).click();
+  await expect(filters.getByRole('button', { name: '2 empty' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: /^Bed 1,/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Bed 3, empty' })).toBeVisible();
   await page.waitForTimeout(700); // past the double-tap guard
-  await filters.getByRole('button', { name: 'Conflict (0)' }).click();
+  await filters.getByRole('button', { name: '0 conflicts' }).click();
   await expect(page.getByText('No beds match this filter.')).toBeVisible();
   await page.waitForTimeout(700);
-  await filters.getByRole('button', { name: 'Occupied (1)' }).click();
+  await filters.getByRole('button', { name: '1 occupied' }).click();
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /empty$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Bed \d+, empty$/ })).toHaveCount(0);
 });

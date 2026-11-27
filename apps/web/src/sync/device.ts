@@ -32,10 +32,10 @@ export async function request(net: Net, method: string, path: string, body?: unk
     headers: {
       'x-wdb-request': '1',
       'x-wdb-client-time': new Date(net.now()).toISOString(),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(body === undefined || body instanceof Blob ? {} : { 'content-type': 'application/json' }),
       ...headers,
     },
-    body: body === undefined ? null : JSON.stringify(body),
+    body: body === undefined ? null : body instanceof Blob ? body : JSON.stringify(body), // a Blob carries its own type
     // A reply lost on a half-open connection would otherwise wait forever; the outbox retries safely (FR-4).
     signal: AbortSignal.timeout(30_000),
   });

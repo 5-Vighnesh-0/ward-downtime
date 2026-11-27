@@ -22,6 +22,7 @@ const TABLES = [
   ['events', 'server_seq'],
   ['audit_log', 'audit_id'],
   ['exports', 'created_at, export_id'],
+  ['ward_settings', 'id'],
 ] as const;
 const PAGE = 5000;
 
@@ -99,8 +100,9 @@ export async function restoreDatabase(pool: pg.Pool, db: Db, data: BackupData): 
         const cols = Object.keys(batch[0] ?? {});
         if (!cols.every((c) => /^[a-z][a-z0-9_]*$/.test(c))) throw new Error(`unexpected column in backup: ${cols.join(',')}`);
         const values = batch.map((_, r) => `(${cols.map((_c, k) => `$${r * cols.length + k + 1}`).join(',')})`).join(',');
+        // pg turns a JS array into a Postgres array, so the jsonb array in ward_settings.bays is sent as JSON text.
         // nosemgrep: wdb-no-interpolated-query -- table from TABLES, columns checked against /^[a-z][a-z0-9_]*$/, values are parameters
-        await client.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES ${values}`, batch.flatMap((row) => cols.map((c) => row[c])));
+        await client.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES ${values}`, batch.flatMap((row) => cols.map((c) => (c === 'bays' && row[c] != null ? JSON.stringify(row[c]) : row[c]))));
       }
     }
     await client.query('UPDATE log_head SET last_seq = $1, last_hash = $2 WHERE id = 1', [data.header.headSeq, Buffer.from(data.header.headHash, 'hex')]);

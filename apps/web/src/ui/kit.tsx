@@ -1,6 +1,7 @@
 // Small shared UI pieces (design.md §10.5): 48 px targets, visible labels, status as icon + text.
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { EngineState, SyncEngine } from '../sync/engine.ts';
+import type { NoticeKey } from './notices.ts';
 
 export const useEngine = (engine: SyncEngine): EngineState =>
   useSyncExternalStore(
@@ -9,7 +10,7 @@ export const useEngine = (engine: SyncEngine): EngineState =>
   );
 
 const variants = {
-  primary: 'bg-status-occupied text-white border-status-occupied',
+  primary: 'bg-accent text-white border-accent',
   secondary: 'bg-surface text-text border-border',
   destructive: 'bg-status-error text-white border-status-error',
 };
@@ -24,6 +25,7 @@ export function Button(p: {
   wide?: boolean;
   label?: string;
   pressed?: boolean; // toggle buttons (aria-pressed)
+  expanded?: boolean; // disclosure buttons (aria-expanded)
 }) {
   // A ref, not disabled state: disabling during the click would cancel a submit button's form submission.
   const last = useRef(-Infinity); // event timestamps count from page load, so 0 would swallow the first 600 ms
@@ -32,13 +34,14 @@ export function Button(p: {
       type={p.type ?? 'button'}
       aria-label={p.label}
       aria-pressed={p.pressed}
+      aria-expanded={p.expanded}
       disabled={p.disabled}
       onClick={(e) => {
         if (e.timeStamp - last.current < 600) return e.preventDefault();
         last.current = e.timeStamp;
         void p.onClick?.();
       }}
-      className={`min-h-12 min-w-12 rounded-lg border-2 px-4 font-semibold disabled:opacity-50 ${variants[p.variant ?? 'secondary']} ${p.wide ? 'min-h-14 w-full' : ''}`}
+      className={`min-h-12 min-w-12 rounded-xl border px-4 font-semibold disabled:opacity-50 ${variants[p.variant ?? 'secondary']} ${p.wide ? 'min-h-14 w-full' : ''}`}
     >
       {p.children}
     </button>
@@ -111,13 +114,76 @@ export function Field(p: { label: string; value: string; onChange: (v: string) =
 }
 
 export function Banner(p: { tone?: 'info' | 'warn' | 'error'; children: ReactNode }) {
-  const tone = { info: 'border-status-occupied', warn: 'border-status-pending', error: 'border-status-error' }[p.tone ?? 'info'];
+  const tone = { info: 'bg-surface-raised', warn: 'bg-status-pending-bg', error: 'bg-status-conflict-bg' }[p.tone ?? 'info'];
   const icon = { info: 'ℹ', warn: '⚠', error: '⛔' }[p.tone ?? 'info'];
   return (
-    <div className={`flex items-start gap-3 rounded-lg border-2 bg-surface-raised p-3 ${tone}`}>
+    <div className={`flex items-start gap-3 rounded-xl p-3 ${tone}`}>
       <span aria-hidden="true">{icon}</span>
       <div className="flex flex-1 flex-wrap items-center gap-3">{p.children}</div>
     </div>
+  );
+}
+
+/** One notice at a time, most urgent first; "+N more" opens the rest (spec 2026-11-18 §1.2). */
+export function NoticeLine({ notices }: { notices: { id: string; key: NoticeKey; tone: 'info' | 'warn' | 'error'; content: ReactNode }[] }) {
+  const [all, setAll] = useState(false);
+  const [first, ...rest] = notices;
+  if (!first) return null;
+  return (
+    <div className="flex flex-col gap-2 px-4 pt-3">
+      <Banner tone={first.tone}>
+        {first.content}
+        {rest.length > 0 && (
+          <Button expanded={all} onClick={() => setAll(!all)}>
+            {all ? 'Hide other notices' : `+${rest.length} more ${rest.length === 1 ? 'notice' : 'notices'}`}
+          </Button>
+        )}
+      </Banner>
+      {all &&
+        rest.map((n) => (
+          <Banner key={n.id} tone={n.tone}>
+            {n.content}
+          </Banner>
+        ))}
+    </div>
+  );
+}
+
+/** The open bed (spec 2026-11-18 §1.3): beside the map from 900 px, a bottom sheet below. Non-modal; Esc or ✕ closes. */
+export function Panel(p: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.show();
+    (d?.querySelector<HTMLElement>('[data-autofocus]') ?? d?.querySelector<HTMLElement>('h2'))?.focus();
+  }, []); // BedSheet is keyed per bed, so this runs once; a rename from another tablet must not steal focus
+  // Non-modal, so Esc must work wherever focus is (the map, the filters), not only inside the panel. A modal or the staff menu takes it first.
+  const onClose = useRef(p.onClose);
+  onClose.current = p.onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('dialog:modal') && onClose.current();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      className="fixed inset-x-0 top-auto bottom-0 z-20 m-0 max-h-[85vh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface p-0 text-text shadow-xl min-[900px]:top-14 min-[900px]:right-0 min-[900px]:left-auto min-[900px]:h-[calc(100vh-3.5rem)] min-[900px]:max-h-none min-[900px]:w-[26rem] min-[900px]:rounded-none"
+    >
+      <div className="flex flex-col gap-4 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <h2 id={titleId} tabIndex={-1} className="text-xl font-semibold">
+            {p.title}
+          </h2>
+          <Button onClick={p.onClose} label="Close">
+            ✕
+          </Button>
+        </div>
+        {p.children}
+      </div>
+    </dialog>
   );
 }
 

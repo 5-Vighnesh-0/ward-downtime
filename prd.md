@@ -66,6 +66,7 @@ Buyer/champion (hypothesis): nursing informatics lead or hospital IT/emergency-p
 | FR-13 | Staff and device sign-in; roles (clerk, nurse, charge, admin) | Must |
 | FR-14 | Audit log view and export | Should |
 | FR-15 | Tasks and handoff notes (v2) | Later |
+| FR-16 | Hospital branding. An admin sets the hospital name, uploads the hospital's logo (PNG or JPEG) and confirms the accent colour, which the board picks from the logo and keeps readable (4.5:1 on white). An admin can group beds into bays for the ward map. Branding and bays are display only: they never enter the event log. Works with no internet. | Should |
 
 ## 6. Non-functional requirements
 

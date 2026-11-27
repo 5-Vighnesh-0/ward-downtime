@@ -13,5 +13,5 @@ test('a tablet joins the ward and admits a patient', async ({ page }) => {
   await configureBeds(page, 4);
   await admit(page, 1, 'Rowan Ashby');
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible();
-  await expect(page.getByText('Unsynced: 0')).toBeVisible();
+  await expect(page.getByText(/· all sent$/)).toBeVisible();
 });

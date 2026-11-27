@@ -33,12 +33,16 @@ test('README screenshots', async ({ browser, browserName }) => {
   for (const [bed, name] of [[1, 'Rowan Ashby'], [2, 'Imani Calloway'], [3, 'Ola Brandt'], [5, 'Tobias Wren'], [7, 'Petra Lind'], [9, 'Kofi Mensah']] as const) await admit(a, bed, name);
 
   await a.getByRole('button', { name: /^Bed 2, Imani Calloway, / }).click();
+  await a.getByRole('button', { name: 'Add a task' }).click();
   await a.getByLabel('New task').fill('Bed needs fresh linen');
   await a.getByLabel('Due at (optional)').fill(hhmmAgo(20)); // shortcut: just after midnight this is tomorrow, so not overdue
   await a.getByRole('button', { name: 'Add task' }).click();
   await a.waitForTimeout(700); // past the double-tap guard
+  await a.getByRole('button', { name: 'Add a task' }).click();
   await a.getByLabel('New task').fill('Book porter for X-ray');
   await a.getByRole('button', { name: 'Add task' }).click();
+  await a.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Notes/ }).click();
+  await a.getByRole('button', { name: 'Add a note' }).click();
   await a.getByLabel('New handoff note').fill('Family visiting after lunch; prefers the window side');
   await a.getByRole('button', { name: 'Add note' }).click();
   await expect(a.getByText('Family visiting after lunch; prefers the window side')).toBeVisible();
@@ -59,7 +63,7 @@ test('README screenshots', async ({ browser, browserName }) => {
   await expect(b.getByRole('button', { name: /^Bed 2, Imani Calloway, 2 tasks, 1 overdue, 1 note, confirmed/ })).toBeVisible();
   await b.screenshot({ path: `${OUT}board-offline.png` });
 
-  await b.setViewportSize({ width: 1180, height: 1500 }); // tall enough for the whole bed sheet
+  await b.setViewportSize({ width: 1180, height: 760 }); // the side panel fills the viewport height
   await b.getByRole('button', { name: /^Bed 2, Imani Calloway, / }).click();
   await expect(b.getByText('Bed needs fresh linen')).toBeVisible();
   await settled(b);

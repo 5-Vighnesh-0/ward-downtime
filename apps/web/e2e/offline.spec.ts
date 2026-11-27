@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { CHROMIUM_ARGS } from '../playwright.config.ts';
 import {
-  admit, boardOf, configureBeds, owner, rename, resetDb, setUpTablet, startApi, stopApi, swReady, unlock,
+  admit, boardOf, configureBeds, owner, rename, resetDb, setUpTablet, startApi, stopApi, swReady, tab, unlock,
 } from './support.ts';
 
 test.beforeEach(async () => {
@@ -16,7 +16,7 @@ test.beforeEach(async () => {
 });
 test.afterAll(stopApi);
 
-const unsynced = (page: Page, n: number) => expect(page.getByText(`Unsynced: ${n}`, { exact: true })).toBeVisible();
+const unsynced = (page: Page, n: number) => expect(page.getByText(n === 0 ? /· all sent$/ : new RegExp(`· ${n} not sent$`))).toBeVisible();
 
 test('E2E-02: 5 offline changes survive closing the browser, then confirm when back online (acceptance 2)', async ({ playwright, browserName }) => {
   const dir = mkdtempSync(join(tmpdir(), 'wdb-e2e-'));
@@ -92,7 +92,7 @@ test('E2E-04: ward server down; two tablets keep working; after restart both con
   await admit(b, 2, 'Mira Holt');
   for (const p of [a, b]) {
     await expect(p.getByText(/^Working offline\./)).toBeVisible();
-    await expect(p.getByRole('button', { name: /pending, not yet confirmed by ward server$/ })).toBeVisible();
+    await expect(p.getByRole('button', { name: /not sent, not yet confirmed by ward server$/ })).toBeVisible();
   }
   await startApi();
   for (const p of [a, b]) {
@@ -146,7 +146,7 @@ test('E2E-08: idle lock after 5 minutes, unlocked offline with the PIN (SEC-7)',
 
 test("E2E-08b: the ward's lock time, once the server accepts it, applies on another tablet (SEC-7)", async ({ page, browser }) => {
   await setUpTablet(page);
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await tab(page, 'Admin');
   await page.getByLabel('Number of beds (1 to 60)').fill('2');
   await page.getByLabel('Lock tablets after this many idle minutes (1 to 15)').fill('2');
   await page.getByRole('button', { name: 'Save ward settings' }).click();
@@ -160,4 +160,24 @@ test("E2E-08b: the ward's lock time, once the server accepts it, applies on anot
   await other.clock.fastForward('00:30');
   await expect(other.getByRole('heading', { name: 'Locked' })).toBeVisible();
   await other.context().close();
+});
+
+test('an admin sets the hospital name and the top bar shows it (FR-16)', async ({ page }) => {
+  await setUpTablet(page);
+  await tab(page, 'Admin');
+  await page.getByLabel('Hospital name').fill('Demo General Hospital');
+  await page.getByRole('button', { name: 'Save hospital settings' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  await expect(page.getByRole('banner').getByText('Demo General Hospital')).toBeVisible();
+});
+
+// 2x2 solid-colour PNG.
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPgK5kARAwQCgAb/gRJPTJvIAAAAABJRU5ErkJggg==', 'base64');
+
+test('an admin uploads a logo and the top bar shows it (FR-16)', async ({ page }) => {
+  await setUpTablet(page);
+  await tab(page, 'Admin');
+  await page.getByLabel('Hospital logo').setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: TINY_PNG });
+  await expect(page.getByRole('status').filter({ hasText: 'Logo saved.' })).toBeVisible();
+  await expect(page.getByRole('banner').locator('img')).toBeVisible();
 });

@@ -54,7 +54,7 @@ test('FI-01: 3 s latency (±1 s): the change shows Pending until acknowledged, a
   await configureBeds(page, 2);
   await addToxic('slow', 'latency', 'downstream', { latency: 3000, jitter: 1000 });
   await admit(page, 1, 'Rowan Ashby');
-  await expect(page.getByRole('button', { name: /^Bed 1, Rowan Ashby, pending/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Bed 1, Rowan Ashby, not sent/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible({ timeout: 30_000 });
   expect(await count("body->>'type' = 'ADMIT'")).toBe(1);
 });
@@ -69,7 +69,7 @@ test('FI-02: the reply is lost after the server committed; the change is in the 
   await page.getByLabel('Patient name label').fill('Rowan Ashby');
   await page.getByRole('button', { name: 'Admit to bed 1' }).click();
   await expect.poll(() => count("body->>'type' = 'ADMIT'"), { timeout: 30_000 }).toBe(1); // committed, unacknowledged
-  await expect(page.getByRole('button', { name: /^Bed 1, Rowan Ashby, pending/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Bed 1, Rowan Ashby, not sent/ })).toBeVisible();
   await removeToxic('lost'); // new connections work; the hung push still waits for its timeout
   await page.evaluate(() => dispatchEvent(new Event('online')));
   await expect(page.getByRole('button', { name: 'Bed 1, Rowan Ashby, confirmed' })).toBeVisible({ timeout: 60_000 }); // via pull

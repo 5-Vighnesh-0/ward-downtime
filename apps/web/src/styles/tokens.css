@@ -1,18 +1,24 @@
-/* Semantic tokens (design.md §10.7). Contrast on --surface (#fff): text 17.9:1, muted 7.6:1, border 4.8:1,
-   occupied 5.4:1, pending 7.1:1, conflict 6.5:1. Every status also has an icon and text, never colour alone. */
+/* Semantic tokens (design.md §10.7, clinical calm per spec 2026-11-18 §1.1). Every status also has an icon and text, never colour alone. */
 @import 'tailwindcss';
 
+/* Clinical calm (spec 2026-11-18 §1.1). Contrast: text on page 14.3:1, muted on page 6.7:1, border on page 3.2:1
+   (WCAG 1.4.11), pending on white 7.7:1, conflict on white 6.6:1. The accent is the hospital's colour, set at run time
+   by applyAccent() and always at least 4.5:1 on white. Status also has an icon and text, never colour alone. */
 @theme {
+  --color-page: #f6f5f1;
   --color-surface: #ffffff;
-  --color-surface-raised: #f1f5f9;
-  --color-text: #0f172a;
-  --color-text-muted: #475569;
-  --color-border: #64748b;
+  --color-surface-raised: #efede7;
+  --color-text: #1c2430;
+  --color-text-muted: #4f5764;
+  --color-border: #858a93;
+  --color-accent: #0e7490;
   --color-focus: #0e7490;
   --color-status-occupied: #0e7490;
-  --color-status-pending: #92400e;
-  --color-status-conflict: #b91c1c;
-  --color-status-error: #b91c1c;
+  --color-status-pending: #8a3b0c;
+  --color-status-pending-bg: #fbecd9;
+  --color-status-conflict: #b42318;
+  --color-status-conflict-bg: #fdeceb;
+  --color-status-error: #b42318;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -20,7 +26,7 @@ html {
   font-size: 18px;
   line-height: 1.4;
   color: var(--color-text);
-  background: var(--color-surface);
+  background: var(--color-page);
 }
 body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);

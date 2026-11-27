@@ -69,17 +69,17 @@ export async function signIn(page: Page, staffId: string): Promise<void> {
   }).toPass({ timeout: 20_000 });
   await page.getByLabel('PIN (6 to 8 digits)').fill(PIN);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Beds' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Beds', exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
 export async function unlock(page: Page): Promise<void> {
   await page.getByLabel('PIN (6 to 8 digits)').fill(PIN);
   await page.getByRole('button', { name: 'Unlock' }).click();
-  await expect(page.getByRole('heading', { name: 'Beds' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Beds', exact: true })).toBeVisible();
 }
 
 export async function configureBeds(page: Page, n: number): Promise<void> {
-  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await tab(page, 'Admin');
   await page.getByLabel('Number of beds (1 to 60)').fill(String(n));
   await page.getByRole('button', { name: 'Save ward settings' }).click();
   await page.getByRole('button', { name: 'Board', exact: true }).click();
@@ -95,7 +95,7 @@ export async function admit(page: Page, bed: number, label: string): Promise<voi
 
 export async function rename(page: Page, bed: number, from: string, to: string): Promise<void> {
   await page.getByRole('button', { name: new RegExp(`^Bed ${bed}, ${from}, `) }).click();
-  await page.getByRole('button', { name: 'Change name label' }).click();
+  await page.getByRole('button', { name: 'Rename' }).click();
   await page.getByLabel('Patient name label').fill(to);
   await page.getByRole('button', { name: 'Save name label' }).click();
   await expect(page.getByRole('button', { name: new RegExp(`^Bed ${bed}, ${to}, `) })).toBeVisible();
@@ -111,7 +111,7 @@ export const swReady = (page: Page) => page.evaluate(async () => !!(await naviga
 export async function reconnect(page: Page): Promise<void> {
   await page.context().setOffline(false);
   await page.evaluate(() => dispatchEvent(new Event('online')));
-  await expect(page.getByText('Unsynced: 0', { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/· all sent$/)).toBeVisible({ timeout: 20_000 });
 }
 
 export const serverBoard = async () => replay(await readEntries(owner.db, 0, 1000));
@@ -128,12 +128,19 @@ export async function twoTablets(browser: Browser) {
 }
 
 
-/** Opens a screen from the tab bar. Retries, because the 600 ms double-tap guard ignores a second tap on the
- *  same tab sooner, which only a test is fast enough to do. */
+/** Opens a screen from the side rail, opening "More" first for Recovery, Audit and Admin. */
 export async function tab(page: Page, name: string): Promise<void> {
-  const button = page.getByRole('navigation', { name: 'Screens' }).getByRole('button', { name: new RegExp(`^${name}`) });
+  const nav = page.getByRole('navigation', { name: 'Screens' });
+  const button = nav.getByRole('button', { name: new RegExp(`^${name}`) });
   await expect(async () => {
+    if (!(await button.isVisible())) await nav.getByRole('button', { name: 'More', exact: true }).click(); // Recovery, Audit, Admin
     await button.click();
     await expect(button.locator('[aria-current="page"]')).toBeVisible({ timeout: 1000 });
   }).toPass({ timeout: 10_000 });
+}
+
+/** Opens the staff menu in the top bar and taps Lock or Sign out. */
+export async function staffMenu(page: Page, item: 'Lock' | 'Sign out'): Promise<void> {
+  await page.getByRole('button', { name: /^S-\d{4}$/ }).click();
+  await page.getByRole('button', { name: item, exact: true }).click();
 }

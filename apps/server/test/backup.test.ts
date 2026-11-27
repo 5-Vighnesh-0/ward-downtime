@@ -43,6 +43,10 @@ const pool = () => app_.pool;
 
 describe('backup and restore', () => {
   it('a backup taken by the app role restores into an empty database with the same chain, audit and exports', async () => {
+    await owner.query(
+      `INSERT INTO ward_settings (id, hospital_name, accent, logo, logo_type, bays, updated_by)
+       VALUES (1, 'Demo General Hospital', '#0e7490', '\\x89504e47'::bytea, 'image/png', '[{"name":"Bay A","beds":["B01"]}]', 'S-0004')`,
+    );
     const { bytes, headSeq } = await takeBackup(pool(), key);
     expect(headSeq).toBe(2);
     expect(bytes.subarray(0, 5).toString()).toBe('WDBB1');
@@ -57,7 +61,9 @@ describe('backup and restore', () => {
       // The BACKUP_DONE row is written after the snapshot, so the backup cannot contain it; the restore adds RECOVERY_STARTED.
       const count = async (p: pg.Pool, t: string) =>
         (await p.query(`SELECT count(*)::int AS n FROM ${t}${t === 'audit_log' ? " WHERE action NOT IN ('BACKUP_DONE', 'RECOVERY_STARTED')" : ''}`)).rows[0].n;
-      for (const t of ['staff', 'devices', 'events', 'audit_log', 'exports']) expect(await count(target.pool, t)).toBe(await count(pool(), t));
+      for (const t of ['staff', 'devices', 'events', 'audit_log', 'exports', 'ward_settings']) expect(await count(target.pool, t)).toBe(await count(pool(), t));
+      const ws = (await target.pool.query('SELECT hospital_name, logo, bays FROM ward_settings')).rows[0];
+      expect(ws).toEqual({ hospital_name: 'Demo General Hospital', logo: Buffer.from('89504e47', 'hex'), bays: [{ name: 'Bay A', beds: ['B01'] }] });
       expect(await count(target.pool, 'sessions')).toBe(0); // everyone signs in again after a restore
       // New audit rows continue after the restored ones instead of colliding.
       await target.pool.query("INSERT INTO audit_log (action, outcome, request_id) VALUES ('X', 'ok', 'r')");

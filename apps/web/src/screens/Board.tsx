@@ -1,16 +1,17 @@
 // Bed grid and bed sheet (design.md §10.3, §10.4; FR-1, FR-2, FR-10). No drag and drop anywhere (WCAG 2.5.7).
-import { useEffect, useState } from 'react';
-import { looksLikeIdentifier, type Board } from '@wdb/shared';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { looksLikeIdentifier, type Bays, type Board } from '@wdb/shared';
 import { copy } from '../copy.en.ts';
 import type { SyncEngine } from '../sync/engine.ts';
-import { cardName, cardState, FILTERS, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
-import { Button, Field, Sheet, useEngine } from '../ui/kit.tsx';
+import { cardName, cardState, countLabel, FILTERS, groupByBay, matches, noteWords, notesFor, taskSummary, taskWords, type CardState, type Filter, type TaskSummary } from '../ui/bedState.ts';
+import { Button, Field, Panel, useEngine } from '../ui/kit.tsx';
 
-const cardStyle: Record<CardState['kind'], string> = {
-  empty: 'border-2 border-border bg-surface-raised',
-  occupied: 'border-2 border-status-occupied',
-  conflict: 'border-4 border-status-conflict',
-  pendingOut: 'border-2 border-dashed border-status-pending',
+const cardStyle: Record<CardState['kind'] | 'occupiedPending', string> = {
+  empty: 'border-2 border-dashed border-border bg-transparent',
+  occupied: 'border border-border bg-surface',
+  conflict: 'border-2 border-status-conflict bg-status-conflict-bg',
+  occupiedPending: 'border-2 border-dashed border-status-pending bg-surface',
+  pendingOut: 'border-2 border-dashed border-status-pending bg-surface',
 };
 
 /** Re-renders every 30 s, so tasks turn overdue without a tap. */
@@ -23,22 +24,30 @@ function useNow(): number {
   return now;
 }
 
-function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state: CardState; tasks: TaskSummary; notes: number; onOpen: () => void }) {
+function BedCard({ id, selected, label, state, tasks, notes, onOpen }: { id: string; selected: boolean; label: string; state: CardState; tasks: TaskSummary; notes: number; onOpen: () => void }) {
   const pending = (state.kind === 'occupied' && state.pending) || state.kind === 'pendingOut';
   const words = taskWords(tasks);
   const [noteWord] = noteWords(notes);
+  // One wrapping meta line (spec: at most one per tile). The spaces keep visible words in the accessible name (WCAG 2.5.3).
+  const metaParts: { cls: string; node: ReactNode }[] = [
+    ...words.map((w) => ({ cls: tasks.overdue ? 'font-semibold text-status-error' : 'text-text-muted', node: w })),
+    ...(noteWord ? [{ cls: 'text-text-muted', node: noteWord }] : []),
+    ...(pending ? [{ cls: 'font-semibold text-status-pending', node: <><span aria-hidden="true">🕓 </span>Not sent</> }] : []),
+  ];
   return (
     <button
       type="button"
+      id={`bed-${id}`}
+      aria-current={selected ? 'true' : undefined}
       onClick={onOpen}
       aria-label={cardName(label, state, tasks, notes)}
-      className={`flex min-h-28 flex-col items-start gap-1 rounded-lg p-3 text-left ${cardStyle[state.kind]} ${pending && state.kind === 'occupied' ? 'border-dashed' : ''}`}
+      className={`flex min-h-24 flex-col items-start gap-1 rounded-xl p-3 text-left ${cardStyle[state.kind === 'occupied' && pending ? 'occupiedPending' : state.kind]} ${selected ? 'ring-2 ring-accent ring-offset-2' : ''}`}
     >
       {/* The spaces keep the visible words apart in the text, so they read as part of the aria-label (WCAG 2.5.3). */}
-      <span className="text-text-muted tabular-nums">{label}</span>{' '}
+      <span className="text-xl font-bold text-accent tabular-nums">{label}</span>{' '}
       {state.kind === 'empty' && <span className="text-text-muted">Empty</span>}
       {(state.kind === 'occupied' || state.kind === 'pendingOut') && (
-        <span className={`text-[22px] font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
+        <span className={`text-lg font-semibold ${state.kind === 'pendingOut' ? 'line-through' : ''}`}>{state.label}</span>
       )}
       {state.kind === 'conflict' && (
         <span className="font-semibold text-status-conflict">
@@ -46,32 +55,22 @@ function BedCard({ label, state, tasks, notes, onOpen }: { label: string; state:
           {copy.conflictTitle(state.count)}
         </span>
       )}
-      {words.length > 0 && ' '}
-      {words.length > 0 && (
-        <span className={tasks.overdue ? 'font-semibold text-status-error' : 'text-text-muted'}>
-          {words[0]}
-          {words[1] && (
-            <>
-              {' '}
-              <span aria-hidden="true">· </span>
-              {words[1]}
-            </>
-          )}
-        </span>
-      )}
-      {noteWord && ' '}
-      {noteWord && <span className="text-text-muted">{noteWord}</span>}
-      {pending && ' '}
-      {pending && (
-        <span className="font-semibold text-status-pending">
-          <span aria-hidden="true">🕓 </span>Pending
+      {metaParts.length > 0 && ' '}
+      {metaParts.length > 0 && (
+        <span>
+          {metaParts.map((m, i) => (
+            <span key={i}>
+              {i > 0 && <span aria-hidden="true"> · </span>}
+              <span className={m.cls}>{m.node}</span>
+            </span>
+          ))}
         </span>
       )}
     </button>
   );
 }
 
-export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: SyncEngine; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
+export function BoardScreen({ engine, bays, isAdmin, canNote, onResolve, onPanel }: { onPanel?: ((open: boolean) => void) | undefined; engine: SyncEngine; bays: Bays | null; isAdmin: boolean; canNote: boolean; onResolve?: (() => void) | undefined }) {
   const s = useEngine(engine);
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('All');
@@ -80,28 +79,45 @@ export function BoardScreen({ engine, isAdmin, canNote, onResolve }: { engine: S
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, bed]) => ({ id, label: bed.label, state: cardState(id, s.view, s.confirmed), tasks: taskSummary(s.view, id, now), notes: notesFor(s.view, id).length }));
   const shown = beds.filter((b) => matches(filter, b.state));
+  // The page pads its content column while a bed is open, so notices and the last rows stay clear of the panel.
+  useEffect(() => {
+    onPanel?.(open !== null);
+    return () => onPanel?.(false);
+  }, [open]);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const close = (id: string) => {
+    if (openRef.current !== id) return; // an action on an earlier bed finished after another bed was opened: leave that one open
+    setOpen(null);
+    requestAnimationFrame(() => document.getElementById(`bed-${id}`)?.focus()); // WCAG 2.4.3: back to the tile
+  };
   return (
     <main className="flex flex-col gap-4 p-4">
-      <h1 className="text-2xl font-semibold">Beds</h1>
+      <h1 className="sr-only">Beds</h1>
       {beds.length === 0 && <p>{copy.noBeds + (isAdmin ? ' Use Admin → Ward beds.' : '')}</p>}
       {beds.length > 0 && (
         <div role="group" aria-label="Show beds" className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
-            <Button key={f} pressed={filter === f} variant={filter === f ? 'primary' : 'secondary'} onClick={() => setFilter(f)}>
-              {`${f} (${beds.filter((b) => matches(f, b.state)).length})`}
+          {FILTERS.filter((f) => f !== 'All').map((f) => (
+            <Button key={f} pressed={filter === f} variant={filter === f ? 'primary' : 'secondary'} onClick={() => setFilter(filter === f ? 'All' : f)}>
+              {countLabel(f, beds.filter((b) => matches(f, b.state)).length)}
             </Button>
           ))}
         </div>
       )}
       {beds.length > 0 && shown.length === 0 && <p role="status">No beds match this filter.</p>}
-      <ul className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
-        {shown.map((b) => (
-          <li key={b.id} className="grid">
-            <BedCard label={b.label} state={b.state} tasks={b.tasks} notes={b.notes} onOpen={() => setOpen(b.id)} />
-          </li>
-        ))}
-      </ul>
-      {open && <BedSheet engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={() => setOpen(null)} onResolve={onResolve} />}
+      {groupByBay(shown, bays).map((g, i) => (
+        <section key={i} aria-labelledby={`bay-${i}`} className="flex flex-col gap-2">
+          <h2 id={`bay-${i}`} className="text-sm font-bold tracking-wider text-text-muted uppercase">{g.name}</h2>
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
+            {g.beds.map((b) => (
+              <li key={b.id} className="grid">
+                <BedCard id={b.id} selected={open === b.id} label={b.label} state={b.state} tasks={b.tasks} notes={b.notes} onOpen={() => setOpen(b.id)} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {open && <BedSheet key={open} engine={engine} board={s.view} confirmed={s.confirmed} bedId={open} canNote={canNote} onClose={() => close(open)} onResolve={onResolve} />}
     </main>
   );
 }
@@ -112,12 +128,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
   const [mode, setMode] = useState<'main' | 'move' | 'rename' | 'discharge'>('main');
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string>();
-  const extras = (
-    <>
-      <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} />
-      <BedNotes engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />
-    </>
-  );
+  const extras = <BedExtras engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />;
   const act = async (f: () => Promise<unknown>) => {
     try {
       await f();
@@ -129,7 +140,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
 
   if (state.kind === 'empty')
     return (
-      <Sheet title={`${bedLabel}: admit`} open onClose={p.onClose}>
+      <Panel title={`${bedLabel}: admit`} onClose={p.onClose}>
         <form className="flex flex-col gap-4" onSubmit={(e) => (e.preventDefault(), void act(() => p.engine.admit({ label: label.trim(), bedId: p.bedId })))}>
           <Field label="Patient name label" value={label} onChange={setLabel} maxLength={40} autoFocus error={error} />
           <p className="text-text-muted">
@@ -140,11 +151,11 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         </form>
         {extras}
-      </Sheet>
+      </Panel>
     );
   if (state.kind === 'conflict')
     return (
-      <Sheet title={`${bedLabel}: ${copy.conflictTitle(state.count)}`} open onClose={p.onClose}>
+      <Panel title={`${bedLabel}: ${copy.conflictTitle(state.count)}`} onClose={p.onClose}>
         <p>{copy.conflictHelp}</p>
         {p.onResolve && (
           <Button variant="primary" wide onClick={p.onResolve}>
@@ -152,22 +163,22 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           </Button>
         )}
         {extras}
-      </Sheet>
+      </Panel>
     );
   if (state.kind === 'pendingOut')
     return (
-      <Sheet title={bedLabel} open onClose={p.onClose}>
-        <p>{state.label} has a pending move or discharge. It shows as confirmed once the ward server has it.</p>
+      <Panel title={bedLabel} onClose={p.onClose}>
+        <p>{state.label}: move or discharge not sent yet. It shows as confirmed once the ward server has it.</p>
         {extras}
-      </Sheet>
+      </Panel>
     );
 
   const { patientId, label: name } = state;
   return (
-    <Sheet title={`${bedLabel}: ${name}`} open onClose={p.onClose}>
+    <Panel title={`${bedLabel}: ${name}`} onClose={p.onClose}>
       <p className="text-text-muted">
         ID: <span className="font-mono">{patientId}</span>
-        {state.pending && ' · Pending'}
+        {state.pending && ' · Not sent'}
       </p>
       {error && (
         <p role="alert" className="font-semibold text-status-error">
@@ -175,14 +186,10 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
         </p>
       )}
       {mode === 'main' && (
-        <div className="flex flex-col gap-2">
-          <Button wide onClick={() => setMode('move')}>
-            Move to another bed
-          </Button>
-          <Button wide onClick={() => (setLabel(name), setMode('rename'))}>
-            Change name label
-          </Button>
-          <Button wide variant="destructive" onClick={() => setMode('discharge')}>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setMode('move')}>Move bed</Button>
+          <Button onClick={() => (setLabel(name), setMode('rename'))}>Rename</Button>
+          <Button variant="destructive" onClick={() => setMode('discharge')}>
             Discharge
           </Button>
         </div>
@@ -228,7 +235,7 @@ function BedSheet(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
         </div>
       )}
       {extras}
-    </Sheet>
+    </Panel>
   );
 }
 
@@ -243,12 +250,45 @@ function dueAtFrom(hhmm: string, now = new Date()): string {
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** WCAG 2.4.3: when the add form closes, focus goes back to the button that opened it (not on first mount). */
+function useReturnFocus(adding: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !adding) ref.current?.querySelector('button')?.focus();
+    was.current = adding;
+  }, [adding]);
+  return ref;
+}
+
+/** Tasks and notes as two tabs with counts (spec 2026-11-18 §1.3). */
+function BedExtras(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
+  const [show, setShow] = useState<'tasks' | 'notes'>('tasks');
+  const tasks = Object.values(p.board.tasks ?? {}).filter((t) => t.bedId === p.bedId && t.status === 'open').length;
+  const notes = notesFor(p.board, p.bedId).length;
+  return (
+    <>
+      <div role="group" aria-label="Show" className="flex gap-1 rounded-xl bg-surface-raised p-1">
+        <Button pressed={show === 'tasks'} variant={show === 'tasks' ? 'primary' : 'secondary'} onClick={() => setShow('tasks')}>
+          {`Tasks · ${tasks}`}
+        </Button>
+        <Button pressed={show === 'notes'} variant={show === 'notes' ? 'primary' : 'secondary'} onClick={() => setShow('notes')}>
+          {`Notes · ${notes}`}
+        </Button>
+      </div>
+      {show === 'tasks' ? <BedTasks engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} /> : <BedNotes engine={p.engine} board={p.board} confirmed={p.confirmed} bedId={p.bedId} canNote={p.canNote} />}
+    </>
+  );
+}
+
 /** FR-15 tasks on this bed. Free text follows the SEC-16 policy: short, no clinical or personal details. */
 function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string }) {
   const [title, setTitle] = useState('');
   const [due, setDue] = useState('');
   const [assignee, setAssignee] = useState('');
   const [error, setError] = useState<string>();
+  const [adding, setAdding] = useState(false);
+  const addRef = useReturnFocus(adding);
   const now = useNow();
   const open = Object.entries(p.board.tasks ?? {}).filter(([, t]) => t.bedId === p.bedId && t.status === 'open');
   const t = title.trim();
@@ -265,7 +305,7 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
     }
   };
   return (
-    <section aria-labelledby={`tasks-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+    <section aria-labelledby={`tasks-${p.bedId}`} className="flex flex-col gap-3">
       <h3 id={`tasks-${p.bedId}`} className="text-lg font-semibold">
         Tasks
       </h3>
@@ -275,41 +315,60 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
           const overdue = task.dueAt !== null && Date.parse(task.dueAt) < now;
           const pending = p.confirmed.tasks?.[id]?.status !== 'open';
           return (
-            <li key={id} className="flex flex-wrap items-center justify-between gap-2">
-              <span>
+            <li key={id} className="flex flex-nowrap items-center gap-2">
+              <span className="min-w-0 flex-1">
                 <span className="font-semibold">{task.title}</span>
                 {task.assignee && ` · for ${task.assignee}`}
                 {task.dueAt && <span className={overdue ? 'font-semibold text-status-error' : ''}>{` · ${overdue ? 'overdue since' : 'due'} ${timeOf(task.dueAt)}`}</span>}
-                {pending && <span className="text-status-pending"> · Pending</span>}
+                {pending && <span className="text-status-pending"> · Not sent</span>}
               </span>
-              <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
-                Done
-              </Button>
+              <span className="shrink-0">
+                <Button label={`Mark ${task.title} done`} onClick={() => run(() => p.engine.record('TASK_COMPLETED', { taskId: id }))}>
+                  Done
+                </Button>
+              </span>
             </li>
           );
         })}
       </ul>
-      <form
-        className="flex flex-col gap-3"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
-          if (await run(() => p.engine.record('TASK_CREATED', payload))) {
-            setTitle('');
-            setDue('');
-            setAssignee('');
-          }
-        }}
-      >
-        <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} />
-        <div className="flex flex-wrap gap-3">
-          <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
-          <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
-        </div>
-        <Button type="submit" disabled={!t || !!titleError || !assigneeOk}>
-          Add task
-        </Button>
-      </form>
+      {error && !adding && (
+        <p role="alert" className="font-semibold text-status-error">
+          {error}
+        </p>
+      )}
+      <div ref={addRef}>
+        {adding ? (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const payload = { bedId: p.bedId, title: t, ...(assignee ? { assignee } : {}), ...(due ? { dueAt: dueAtFrom(due) } : {}) };
+              if (await run(() => p.engine.record('TASK_CREATED', payload))) {
+                setTitle('');
+                setDue('');
+                setAssignee('');
+                setAdding(false);
+              }
+            }}
+          >
+            <Field label="New task" value={title} onChange={setTitle} maxLength={60} hint={copy.noClinical} error={titleError ?? error} autoFocus />
+            <div className="flex flex-wrap gap-3">
+              <Field label="Due at (optional)" type="time" value={due} onChange={setDue} />
+              <Field label="For staff ID (optional)" value={assignee} onChange={(v) => setAssignee(v.toUpperCase().slice(0, 6))} error={assigneeOk ? undefined : 'Use a staff ID like S-0002'} />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" variant="primary" disabled={!t || !!titleError || !assigneeOk}>
+                Add task
+              </Button>
+              <Button onClick={() => setAdding(false)}>Cancel</Button>
+            </div>
+          </form>
+        ) : (
+          <Button onClick={() => setAdding(true)}>
+            <span aria-hidden="true">+ </span>Add a task
+          </Button>
+        )}
+      </div>
     </section>
   );
 }
@@ -318,12 +377,14 @@ function BedTasks(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
 function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId: string; canNote: boolean }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string>();
+  const [adding, setAdding] = useState(false);
+  const addRef = useReturnFocus(adding);
   const notes = notesFor(p.board, p.bedId);
   const confirmed = new Set(notesFor(p.confirmed, p.bedId).map((n) => n.eventId));
   const t = text.trim();
   const textError = t && looksLikeIdentifier(t) ? copy.noIdentifiers : undefined;
   return (
-    <section aria-labelledby={`notes-${p.bedId}`} className="flex flex-col gap-3 border-t-2 border-border pt-4">
+    <section aria-labelledby={`notes-${p.bedId}`} className="flex flex-col gap-3">
       <h3 id={`notes-${p.bedId}`} className="text-lg font-semibold">
         Handoff notes
       </h3>
@@ -336,31 +397,43 @@ function BedNotes(p: { engine: SyncEngine; board: Board; confirmed: Board; bedId
               <p>{n.text}</p>
               <p className="text-text-muted">
                 {n.by}, {timeOf(n.at)}
-                {!confirmed.has(n.eventId) && <span className="text-status-pending"> · Pending</span>}
+                {!confirmed.has(n.eventId) && <span className="text-status-pending"> · Not sent</span>}
               </p>
             </li>
           ))}
         </ul>
       )}
       {p.canNote && (
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            try {
-              setError(undefined);
-              await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
-              setText('');
-            } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
-            }
-          }}
-        >
-          <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} />
-          <Button type="submit" disabled={!t || !!textError}>
-            Add note
-          </Button>
-        </form>
+        <div ref={addRef}>
+          {adding ? (
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  setError(undefined);
+                  await p.engine.record('HANDOFF_NOTE_ADDED', { bedId: p.bedId, text: t });
+                  setText('');
+                  setAdding(false);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                }
+              }}
+            >
+              <Field label="New handoff note" value={text} onChange={setText} maxLength={140} hint={copy.noClinical} error={textError ?? error} autoFocus />
+              <div className="flex gap-2">
+                <Button type="submit" variant="primary" disabled={!t || !!textError}>
+                  Add note
+                </Button>
+                <Button onClick={() => setAdding(false)}>Cancel</Button>
+              </div>
+            </form>
+          ) : (
+            <Button onClick={() => setAdding(true)}>
+              <span aria-hidden="true">+ </span>Add a note
+            </Button>
+          )}
+        </div>
       )}
     </section>
   );
